@@ -1,0 +1,22 @@
+{
+  "name": "Skylark Weather",
+  "short_name": "Skylark",
+  "description": "A friendly, animated weather companion — current conditions, feels-like, air quality, 24-hour trends, and what to wear today.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "portrait-primary",
+  "background_color": "#4A90E2",
+  "theme_color": "#4A90E2",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["weather", "utilities", "lifestyle"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
