@@ -409,8 +409,19 @@ function buildChartDatasets(hourly, nowIndex, aqiHourly, nowIndexAqi) {
   return { labels, temp, feels, pop, precipMm, wind, gust, hum, uv, aqi };
 }
 
+function syncChartSelection(metric) {
+  const activeMetric = metric || 'temp';
+  state.activeMetric = activeMetric;
+  document.querySelectorAll('.chart-tab').forEach((button) => {
+    const isSelected = button.dataset.metric === activeMetric;
+    button.setAttribute('aria-selected', String(isSelected));
+  });
+}
+
 function renderChart(metric) {
-  state.activeMetric = metric;
+  const activeMetric = metric || 'temp';
+  state.activeMetric = activeMetric;
+  syncChartSelection(activeMetric);
   const cd = state.chartData;
   if (!cd) return;
   const windUnit = windUnitLabel();
@@ -706,9 +717,9 @@ function wireEvents() {
 
   document.querySelectorAll('.chart-tab').forEach((btn) => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.chart-tab').forEach((b) => b.setAttribute('aria-selected', 'false'));
-      btn.setAttribute('aria-selected', 'true');
-      renderChart(btn.dataset.metric);
+      const metric = btn.dataset.metric;
+      syncChartSelection(metric);
+      renderChart(metric);
     });
   });
 
