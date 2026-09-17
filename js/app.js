@@ -662,7 +662,7 @@ function cacheDom() {
     hero: byId('hero'), hourlySection: byId('hourly-section'), guidanceSection: byId('guidance-section'), appFooter: byId('app-footer'),
     heroLocation: byId('hero-location'), heroUpdated: byId('hero-updated'),
     tempValue: byId('temp-value'), tempUnitLabel: byId('temp-unit-label'), conditionLabel: byId('condition-label'),
-    feelsLike: byId('feels-like'), hiTemp: byId('hi-temp'), loTemp: byId('lo-temp'),
+    feelsLike: byId('feels-like'), hiTemp: byId('hi-temp'), loTemp: byId('lo-temp'), appVersion: byId('app-version'),
     chipPrecip: byId('chip-precip'), chipPrecipSub: byId('chip-precip-sub'),
     chipWind: byId('chip-wind'), chipWindSub: byId('chip-wind-sub'), chipGust: byId('chip-gust'),
     chipHumidity: byId('chip-humidity'), chipAqi: byId('chip-aqi'), chipAqiSub: byId('chip-aqi-sub'), aqiDot: byId('aqi-dot'),
@@ -749,6 +749,9 @@ function bootstrapLocation() {
 
 document.addEventListener('DOMContentLoaded', () => {
   cacheDom();
+
+  const versionMeta = document.querySelector('meta[name="app-version"]');
+  dom.appVersion.textContent = versionMeta ? versionMeta.content : 'dev';
 
   const savedUnit = (() => { try { return localStorage.getItem('skylark:unit'); } catch (_) { return null; } })();
   if (savedUnit === 'F' || savedUnit === 'C') {
