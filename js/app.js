@@ -419,7 +419,8 @@ function syncChartSelection(metric) {
 }
 
 function renderChart(metric) {
-  const activeMetric = metric || 'temp';
+  const allowed = ['temp', 'precip', 'wind', 'humidity', 'uv', 'aqi'];
+  const activeMetric = allowed.includes(metric) ? metric : 'temp';
   state.activeMetric = activeMetric;
   syncChartSelection(activeMetric);
   const cd = state.chartData;
@@ -543,6 +544,8 @@ function render() {
   // --- hourly strip + charts ---
   renderHourStrip(hourly, nowIndex);
   state.chartData = buildChartDatasets(hourly, nowIndex, aqiData ? aqiData.hourly : null, nowIndexAqi);
+  state.activeMetric = 'temp';
+  syncChartSelection(state.activeMetric);
   renderChart(state.activeMetric);
 
   // --- guidance ---
