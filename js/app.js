@@ -21,7 +21,7 @@ let dom = {};
 let toastTimer = null;
 let searchDebounceTimer = null;
 let deferredInstallPrompt = null;
-const AUTO_REFRESH_MS = 10 * 60 * 1000;
+const AUTO_REFRESH_MS = 5 * 60 * 1000;
 
 /* ---------------------------------------------------------------------- */
 /* Lookup tables                                                          */
