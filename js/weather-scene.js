@@ -17,18 +17,18 @@ const WeatherScene = (() => {
 
   // gradient recipes per "mood" — used by the CSS crossfade layers, not canvas
   const SKY_GRADIENTS = {
-    'clear-day':    'linear-gradient(180deg,#3f8ee0 0%,#7fc1ef 55%,#eaf6ff 100%)',
-    'clear-night':  'linear-gradient(180deg,#0b1230 0%,#182357 55%,#2c3868 100%)',
-    'clouds-day':   'linear-gradient(180deg,#7d93a8 0%,#a9bcc9 55%,#dfe6ea 100%)',
-    'clouds-night': 'linear-gradient(180deg,#171d2c 0%,#232b40 55%,#333c54 100%)',
-    'fog-day':      'linear-gradient(180deg,#9aa6ab 0%,#c4cdd0 60%,#e6eaea 100%)',
-    'fog-night':    'linear-gradient(180deg,#1b2027 0%,#2b323c 60%,#3c4550 100%)',
-    'rain-day':     'linear-gradient(180deg,#4a5b72 0%,#6c7f96 55%,#9aabbd 100%)',
-    'rain-night':   'linear-gradient(180deg,#0d1220 0%,#171f30 55%,#232c40 100%)',
-    'storm-day':    'linear-gradient(180deg,#2c3547 0%,#454f63 55%,#69748a 100%)',
-    'storm-night':  'linear-gradient(180deg,#080a12 0%,#12141f 55%,#1c2030 100%)',
-    'snow-day':     'linear-gradient(180deg,#7e93ad 0%,#b7cbdd 55%,#eef4f8 100%)',
-    'snow-night':   'linear-gradient(180deg,#141a2c 0%,#232c45 55%,#333f5c 100%)',
+    'clear-day':    'linear-gradient(180deg,#5eaef9 0%,#8ad7ff 36%,#d9f4ff 68%,#fff2d8 100%)',
+    'clear-night':  'linear-gradient(180deg,#121a39 0%,#1f2e6c 38%,#495eaa 70%,#b9c6f4 100%)',
+    'clouds-day':   'linear-gradient(180deg,#77a9d8 0%,#a9d0f8 28%,#dff4ff 62%,#eff9ff 100%)',
+    'clouds-night': 'linear-gradient(180deg,#1a2342 0%,#2d3d67 34%,#536b99 66%,#b8c8eb 100%)',
+    'fog-day':      'linear-gradient(180deg,#a6b4bd 0%,#d1dfe6 40%,#edf7ff 100%)',
+    'fog-night':    'linear-gradient(180deg,#1b2433 0%,#35455f 35%,#5a6d89 100%)',
+    'rain-day':     'linear-gradient(180deg,#4e6f95 0%,#6d8db2 32%,#8fb2c9 62%,#cfe8f4 100%)',
+    'rain-night':   'linear-gradient(180deg,#0d1320 0%,#1c2a3e 35%,#3c4f73 68%,#b5c7d8 100%)',
+    'storm-day':    'linear-gradient(180deg,#2a3d66 0%,#4d5f86 30%,#7288aa 62%,#dce9ff 100%)',
+    'storm-night':  'linear-gradient(180deg,#0c1220 0%,#1a2540 36%,#354a6a 64%,#a7b8db 100%)',
+    'snow-day':     'linear-gradient(180deg,#8db4d6 0%,#cfe6f7 38%,#edf8ff 68%,#f8fbff 100%)',
+    'snow-night':   'linear-gradient(180deg,#19253f 0%,#2f4875 36%,#647ca8 64%,#dfe9ff 100%)',
   };
 
   let skyA, skyB, activeIsA = true;
@@ -224,11 +224,16 @@ const WeatherScene = (() => {
     ctx.restore();
   }
 
+  function windAnimationStrength() {
+    return Math.min(1, sky.windKph / 42);
+  }
+
   function drawClouds(dt) {
+    const windBoost = 0.1 + windAnimationStrength() * 1.2;
     for (const c of clouds) {
-      c.x += (c.speed * dt) / (w || 1) * (0.02 + sky.windKph / 900);
+      c.x += (c.speed * dt) / (w || 1) * windBoost;
       if (c.x > 1.25) c.x = -0.25;
-      const alpha = 0.55 + c.depth * 0.35;
+      const alpha = 0.62 + c.depth * 0.38;
       drawCloud(c.x * w, c.y * h, c.scale, alpha);
     }
   }
@@ -254,18 +259,20 @@ const WeatherScene = (() => {
 
   function drawRain(dt) {
     if (!rain.length) return;
-    const windLean = Math.max(-0.5, Math.min(0.5, sky.windKph / 60));
+    const maxWindLean = Math.max(-1.0, Math.min(1.0, sky.windKph / 35)) * windAnimationStrength();
     ctx.save();
-    ctx.strokeStyle = sky.isDay ? 'rgba(210,228,245,0.75)' : 'rgba(150,175,210,0.65)';
-    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = sky.isDay ? 'rgba(210,228,245,0.8)' : 'rgba(150,175,210,0.7)';
+    ctx.lineWidth = 1.5;
     for (const d of rain) {
       d.y += (d.speed * dt) / (h || 1);
-      d.x += (windLean * d.speed * dt) / (w || 1);
+      d.x += (maxWindLean * d.speed * dt) / (w || 1) * 0.7;
       if (d.y > 1.05) { d.y = -0.05; d.x = Math.random(); }
+      if (d.x > 1.05) d.x = -0.05;
+      if (d.x < -0.05) d.x = 1.05;
       const x = d.x * w, y = d.y * h;
       ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.lineTo(x + windLean * d.len, y + d.len);
+      ctx.lineTo(x + maxWindLean * d.len, y + d.len);
       ctx.stroke();
     }
     ctx.restore();
@@ -273,12 +280,13 @@ const WeatherScene = (() => {
 
   function drawSnow(dt, t) {
     if (!snow.length) return;
+    const windDrift = windAnimationStrength();
     ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.fillStyle = 'rgba(255,255,255,0.96)';
     for (const s of snow) {
       s.y += (s.speed * dt) / (h || 1);
-      const driftX = Math.sin(t * 0.001 * s.driftSpeed + s.drift) * 0.01;
-      s.x += driftX * dt * 0.06 + (sky.windKph / 4000) * dt;
+      const driftX = Math.sin(t * 0.001 * s.driftSpeed + s.drift) * 0.012;
+      s.x += driftX * dt * 0.09 + (sky.windKph / 2200) * windDrift * dt;
       if (s.y > 1.05) { s.y = -0.05; s.x = Math.random(); }
       if (s.x > 1.05) s.x = -0.05;
       if (s.x < -0.05) s.x = 1.05;

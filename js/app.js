@@ -12,13 +12,16 @@ const state = {
   lat: null, lon: null, placeName: '',
   rawWeather: null, rawAqi: null,
   chartData: null, activeMetric: 'temp',
+  chartConfig: null,
   lastResults: [],
+  lastRefresh: 0,
 };
 
 let dom = {};
 let toastTimer = null;
 let searchDebounceTimer = null;
 let deferredInstallPrompt = null;
+const AUTO_REFRESH_MS = 10 * 60 * 1000;
 
 /* ---------------------------------------------------------------------- */
 /* Lookup tables                                                          */
@@ -122,7 +125,7 @@ async function fetchWeather(lat, lon) {
       'weather_code', 'cloud_cover', 'pressure_msl', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'].join(','),
     hourly: ['temperature_2m', 'apparent_temperature', 'precipitation_probability', 'precipitation', 'weather_code',
       'relative_humidity_2m', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'visibility', 'is_day'].join(','),
-    daily: ['temperature_2m_max', 'temperature_2m_min', 'uv_index_max', 'precipitation_probability_max', 'precipitation_sum'].join(','),
+    daily: ['temperature_2m_max', 'temperature_2m_min', 'uv_index_max', 'precipitation_probability_max', 'precipitation_sum', 'sunrise', 'sunset'].join(','),
     timezone: 'auto', forecast_days: '3', wind_speed_unit: 'kmh',
   });
   const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
@@ -142,7 +145,95 @@ async function fetchAQI(lat, lon) {
   return res.json();
 }
 
+const DEMO_WEATHER_PRESETS = [
+  { id: 'warm-clear', label: 'Warm + clear', weatherCode: 1, category: 'clear', temp: 28, feelsLike: 29, windKph: 12, humidity: 38, precip: 0, uv: 7, visibility: 14000, aqi: 36 },
+  { id: 'rainy-mild', label: 'Rainy + mild', weatherCode: 61, category: 'rain', temp: 14, feelsLike: 13, windKph: 23, humidity: 76, precip: 3.2, uv: 2, visibility: 7000, aqi: 82 },
+  { id: 'snow-cold', label: 'Snow + below freezing', weatherCode: 71, category: 'snow', temp: -4, feelsLike: -9, windKph: 18, humidity: 81, precip: 2.6, uv: 0, visibility: 4200, aqi: 58 },
+  { id: 'storm-windy', label: 'Storm + windy', weatherCode: 95, category: 'storm', temp: 18, feelsLike: 15, windKph: 42, humidity: 70, precip: 8.5, uv: 3, visibility: 3200, aqi: 92 },
+  { id: 'fog-cool', label: 'Fog + cool', weatherCode: 45, category: 'fog', temp: 6, feelsLike: 4, windKph: 9, humidity: 88, precip: 0, uv: 1, visibility: 1800, aqi: 44 },
+  { id: 'hot-clear', label: 'Hot + clear', weatherCode: 0, category: 'clear', temp: 33, feelsLike: 35, windKph: 10, humidity: 30, precip: 0, uv: 10, visibility: 16000, aqi: 48 },
+  { id: 'cold-clear', label: 'Cold + clear', weatherCode: 1, category: 'clear', temp: -8, feelsLike: -14, windKph: 16, humidity: 62, precip: 0, uv: 1, visibility: 9000, aqi: 62 },
+];
+
+function makeDemoWeatherPayload(preset) {
+  const now = new Date();
+  const toIso = (offsetHours) => new Date(now.getTime() + offsetHours * 60 * 60 * 1000).toISOString();
+  const times = Array.from({ length: 24 }, (_, i) => toIso(i));
+  const hourlyTemperatures = Array.from({ length: 24 }, (_, i) => preset.temp + Math.sin(i / 3.3) * 4.5);
+  const hourlyFeels = Array.from({ length: 24 }, (_, i) => preset.feelsLike + Math.sin((i + 1) / 3.7) * 3.2);
+  const hourlyPop = Array.from({ length: 24 }, (_, i) => Math.max(0, Math.min(100, preset.category === 'rain' ? 60 + Math.sin(i / 2.6) * 25 : preset.category === 'storm' ? 75 + Math.sin(i / 2.1) * 18 : preset.category === 'snow' ? 45 + Math.sin(i / 2.8) * 25 : 10 + i * 0.8)));
+  const hourlyPrecip = Array.from({ length: 24 }, (_, i) => preset.precip > 0 ? Math.max(0, preset.precip * (0.45 + (Math.cos(i / 2.6) + 1) / 4)) : 0);
+  const hourlyWind = Array.from({ length: 24 }, (_, i) => Math.max(0, preset.windKph + Math.sin(i / 2.2) * 6));
+  const hourlyGust = Array.from({ length: 24 }, (_, i) => Math.max(0, preset.windKph * 1.4 + Math.sin(i / 1.7) * 10));
+  const hourlyHumidity = Array.from({ length: 24 }, (_, i) => preset.humidity + Math.sin((i + 3) / 2.4) * 18);
+  const hourlyUv = Array.from({ length: 24 }, (_, i) => Math.max(0, preset.uv + Math.sin(i / 2.1) * 2));
+  const hourlyVisibility = Array.from({ length: 24 }, (_, i) => Math.max(200, preset.visibility + Math.sin(i / 2.8) * 2500));
+  const weatherCodes = Array.from({ length: 24 }, () => preset.weatherCode);
+
+  const dailyMax = Math.max(...hourlyTemperatures);
+  const dailyMin = Math.min(...hourlyTemperatures);
+  const sunrise = new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString();
+  const sunset = new Date(now.getTime() + 18 * 60 * 60 * 1000).toISOString();
+
+  return {
+    latitude: 0,
+    longitude: 0,
+    current: {
+      time: now.toISOString(),
+      temperature_2m: preset.temp,
+      apparent_temperature: preset.feelsLike,
+      relative_humidity_2m: preset.humidity,
+      precipitation: preset.precip,
+      weather_code: preset.weatherCode,
+      cloud_cover: 45,
+      pressure_msl: 1016,
+      wind_speed_10m: preset.windKph,
+      wind_direction_10m: 180,
+      wind_gusts_10m: preset.windKph * 1.5,
+      is_day: 1,
+    },
+    hourly: {
+      time: times,
+      temperature_2m: hourlyTemperatures,
+      apparent_temperature: hourlyFeels,
+      precipitation_probability: hourlyPop,
+      precipitation: hourlyPrecip,
+      weather_code: weatherCodes,
+      relative_humidity_2m: hourlyHumidity,
+      wind_speed_10m: hourlyWind,
+      wind_gusts_10m: hourlyGust,
+      uv_index: hourlyUv,
+      visibility: hourlyVisibility,
+      is_day: Array.from({ length: 24 }, () => 1),
+    },
+    daily: {
+      temperature_2m_max: [dailyMax],
+      temperature_2m_min: [dailyMin],
+      uv_index_max: [Math.max(...hourlyUv)],
+      precipitation_probability_max: [Math.max(...hourlyPop)],
+      precipitation_sum: [hourlyPrecip.reduce((sum, value) => sum + value, 0)],
+      sunrise: [sunrise],
+      sunset: [sunset],
+    },
+  };
+}
+
 async function geocodeSearch(name) {
+  const trimmed = name.trim();
+  const slug = trimmed.toLowerCase();
+  if (slug.includes('weather lab') || slug.includes('skylark test') || slug.includes('test weather') || slug.includes('demo weather')) {
+    return DEMO_WEATHER_PRESETS.map((preset, index) => ({
+      name: `Skylark Weather Lab — ${preset.label}`,
+      admin1: 'Demo mode',
+      country: 'Test',
+      latitude: 0,
+      longitude: 0,
+      isDemo: true,
+      demoMode: preset.id,
+      demoIndex: index,
+    }));
+  }
+
   const params = new URLSearchParams({ name, count: '8', language: 'en', format: 'json' });
   const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?${params.toString()}`);
   if (!res.ok) throw new Error('geocode_failed');
@@ -167,6 +258,23 @@ function formatPlaceLabel(r) {
   return bits.join(', ');
 }
 
+function loadDemoWeatherPreset(modeId, label) {
+  const preset = DEMO_WEATHER_PRESETS.find((item) => item.id === modeId) || DEMO_WEATHER_PRESETS[0];
+  const payload = makeDemoWeatherPayload(preset);
+  state.lat = 0;
+  state.lon = 0;
+  state.placeName = label || `Skylark Weather Lab — ${preset.label}`;
+  state.rawWeather = payload;
+  state.rawAqi = {
+    current: { us_aqi: preset.aqi },
+    hourly: { time: payload.hourly.time, us_aqi: Array.from({ length: 24 }, (_, i) => Math.max(10, preset.aqi + Math.sin(i / 2.7) * 18)) },
+  };
+  state.lastRefresh = Date.now();
+  render();
+  showState('content');
+  scheduleAutoRefresh();
+}
+
 /* ---------------------------------------------------------------------- */
 /* Persistence                                                            */
 /* ---------------------------------------------------------------------- */
@@ -179,13 +287,13 @@ function loadLastLocation() { try { const raw = localStorage.getItem('skylark:la
 /* ---------------------------------------------------------------------- */
 
 function showState(name) {
-  dom.stateLoading.style.display = name === 'loading' ? 'flex' : 'none';
-  dom.stateError.style.display = name === 'error' ? 'flex' : 'none';
+  if (dom.stateLoading) dom.stateLoading.style.display = name === 'loading' ? 'flex' : 'none';
+  if (dom.stateError) dom.stateError.style.display = name === 'error' ? 'flex' : 'none';
   const contentDisplay = name === 'content' ? '' : 'none';
-  dom.hero.style.display = contentDisplay;
-  dom.hourlySection.style.display = contentDisplay;
-  dom.guidanceSection.style.display = contentDisplay;
-  dom.appFooter.style.display = contentDisplay;
+  if (dom.hero) dom.hero.style.display = contentDisplay;
+  if (dom.hourlySection) dom.hourlySection.style.display = contentDisplay;
+  if (dom.guidanceSection) dom.guidanceSection.style.display = contentDisplay;
+  if (dom.appFooter) dom.appFooter.style.display = contentDisplay;
 }
 
 function showNotice({ title, body, actionLabel, action }) {
@@ -215,18 +323,28 @@ function setLocateBusy(busy) { dom.locateBtn.classList.toggle('is-busy', busy); 
 /* Location flow                                                          */
 /* ---------------------------------------------------------------------- */
 
-async function loadLocation(lat, lon, label) {
-  showState('loading');
-  dom.loadingTitle.textContent = 'Finding your sky…';
+async function loadLocation(lat, lon, label, options = {}) {
+  const { silent = false, refreshOnly = false } = options;
+  if (!silent) {
+    showState('loading');
+    dom.loadingTitle.textContent = 'Finding your sky…';
+  }
   try {
     const weatherPromise = fetchWeather(lat, lon);
     const aqiPromise = fetchAQI(lat, lon).catch(() => null);
     const [weatherData, aqiData] = await Promise.all([weatherPromise, aqiPromise]);
     state.lat = lat; state.lon = lon; state.placeName = label;
     state.rawWeather = weatherData; state.rawAqi = aqiData;
+    state.lastRefresh = Date.now();
     render();
-    showState('content');
+    if (!silent && !refreshOnly) showState('content');
+    if (!state.rawWeather || !state.rawWeather.current) return;
+    scheduleAutoRefresh();
   } catch (err) {
+    if (silent) {
+      toast('Weather refresh failed — trying again soon.');
+      return;
+    }
     showNotice({
       title: "Couldn't load the forecast",
       body: 'Check your connection and try again.',
@@ -234,6 +352,20 @@ async function loadLocation(lat, lon, label) {
       action: () => loadLocation(lat, lon, label),
     });
   }
+}
+
+async function refreshWeatherData() {
+  if (state.lat == null || state.lon == null) return;
+  await loadLocation(state.lat, state.lon, state.placeName, { silent: true, refreshOnly: true });
+}
+
+function scheduleAutoRefresh() {
+  clearInterval(state.autoRefreshTimer);
+  state.autoRefreshTimer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    if (state.lat == null || state.lon == null) return;
+    if (Date.now() - state.lastRefresh >= AUTO_REFRESH_MS) refreshWeatherData();
+  }, 60000);
 }
 
 function useMyLocation() {
@@ -269,6 +401,13 @@ function useMyLocation() {
 }
 
 function selectResult(r) {
+  if (r.isDemo) {
+    const presetId = r.demoMode || 'warm-clear';
+    const label = r.name || `Skylark Weather Lab — ${presetId}`;
+    loadDemoWeatherPreset(presetId, label);
+    return;
+  }
+
   const label = formatPlaceLabel(r);
   saveLastLocation({ lat: r.latitude, lon: r.longitude, label });
   loadLocation(r.latitude, r.longitude, label);
@@ -471,6 +610,7 @@ function renderChart(metric) {
     };
     dom.chartLegend.innerHTML = legendDot('#4cb782', 'Good') + legendDot('#f0a93c', 'Moderate') + legendDot('#e8615c', 'Unhealthy');
   }
+  state.chartConfig = config;
   Charts.render(dom.chartCanvas, config);
 }
 function legendDot(color, label) { return `<span><i class="legend-dot" style="background:${color}"></i>${label}</span>`; }
@@ -491,10 +631,13 @@ function render() {
   const isDay = cur.is_day === 1;
 
   const nowIndexAqi = aqiData && aqiData.hourly ? findNowIndex(aqiData.hourly.time, aqiData.current.time) : 0;
+  const sunrise = daily.sunrise && daily.sunrise[0] ? parseLocal(daily.sunrise[0]) : null;
+  const sunset = daily.sunset && daily.sunset[0] ? parseLocal(daily.sunset[0]) : null;
 
   // --- header / location ---
   dom.heroLocation.textContent = state.placeName;
   dom.heroUpdated.textContent = 'Updated ' + parseLocal(cur.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  dom.sunTimes.textContent = `${sunrise ? 'Sunrise ' + sunrise.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Sunrise —'} · ${sunset ? 'Sunset ' + sunset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Sunset —'}`;
 
   // --- hero temperature ---
   dom.tempValue.textContent = formatTemp(cur.temperature_2m);
@@ -668,8 +811,8 @@ function cacheDom() {
     chipHumidity: byId('chip-humidity'), chipAqi: byId('chip-aqi'), chipAqiSub: byId('chip-aqi-sub'), aqiDot: byId('aqi-dot'),
     chipUv: byId('chip-uv'), chipUvSub: byId('chip-uv-sub'), chipPressure: byId('chip-pressure'),
     chipVisibility: byId('chip-visibility'), chipVisibilitySub: byId('chip-visibility-sub'),
-    hourStrip: byId('hour-strip'), chartCanvas: byId('chart-canvas'), chartLegend: byId('chart-legend'),
-    guidanceGrid: byId('guidance-grid'),
+    hourStrip: byId('hour-strip'), chartCanvas: byId('chart-canvas'), chartLegend: byId('chart-legend'), chartTooltip: byId('chart-tooltip'),
+    guidanceGrid: byId('guidance-grid'), sunTimes: byId('sun-times'),
     searchForm: byId('search-form'), searchInput: byId('search-input'), resultsPanel: byId('results-panel'),
     locateBtn: byId('locate-btn'), unitC: byId('unit-c'), unitF: byId('unit-f'), scrollCue: byId('scroll-cue'),
     installBanner: byId('install-banner'), installBtn: byId('install-btn'), installDismiss: byId('install-dismiss'), installCopy: byId('install-copy'),
@@ -731,9 +874,58 @@ function wireEvents() {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { if (state.chartData) renderChart(state.activeMetric); }, 200);
   });
+
+  dom.chartCanvas.addEventListener('pointermove', showChartTooltip);
+  dom.chartCanvas.addEventListener('pointerleave', hideChartTooltip);
+  dom.chartCanvas.addEventListener('click', showChartTooltip);
+}
+
+function chartValueLabel(metric, value) {
+  if (value == null || Number.isNaN(value)) return '—';
+  if (metric === 'temp') return `${Math.round(value)}°`;
+  if (metric === 'precip') return `${Math.round(value)}%`;
+  if (metric === 'wind') return `${Math.round(value)} ${windUnitLabel()}`;
+  if (metric === 'humidity') return `${Math.round(value)}%`;
+  if (metric === 'uv') return `${Math.round(value)}`;
+  if (metric === 'aqi') return `${Math.round(value)}`;
+  return `${Math.round(value)}`;
+}
+
+function showChartTooltip(event) {
+  if (!state.chartData || !state.chartConfig) return;
+  const canvas = dom.chartCanvas;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const W = rect.width;
+  const padL = 30, padR = 8;
+  const innerW = W - padL - padR;
+  const n = state.chartData.labels.length;
+  const index = Math.max(0, Math.min(n - 1, Math.round(((x - padL) / Math.max(innerW, 1)) * (n - 1))));
+  const metric = state.activeMetric || 'temp';
+  const value = state.chartConfig.series[0].data[index];
+  const time = state.chartData.labels[index];
+  const valueText = chartValueLabel(metric, value);
+
+  dom.chartTooltip.innerHTML = `<strong>${valueText}</strong><span>${time}</span>`;
+  const left = Math.min(Math.max(x, 28), W - 28);
+  dom.chartTooltip.style.left = `${left}px`;
+  dom.chartTooltip.style.top = `${Math.max(18, rect.height * 0.38)}px`;
+  dom.chartTooltip.classList.add('visible');
+}
+
+function hideChartTooltip() {
+  dom.chartTooltip.classList.remove('visible');
 }
 
 function bootstrapLocation() {
+  const params = new URLSearchParams(window.location.search);
+  const demoMode = params.get('demo');
+  if (demoMode) {
+    const preset = DEMO_WEATHER_PRESETS.find((item) => item.id === demoMode) || DEMO_WEATHER_PRESETS[0];
+    loadDemoWeatherPreset(preset.id, `Skylark Weather Lab — ${preset.label}`);
+    return;
+  }
+
   const saved = loadLastLocation();
   if (saved && typeof saved.lat === 'number' && typeof saved.lon === 'number') {
     loadLocation(saved.lat, saved.lon, saved.label || 'Your location');
@@ -751,7 +943,7 @@ document.addEventListener('DOMContentLoaded', () => {
   cacheDom();
 
   const versionMeta = document.querySelector('meta[name="app-version"]');
-  dom.appVersion.textContent = versionMeta ? versionMeta.content : 'dev';
+  if (dom.appVersion) dom.appVersion.textContent = versionMeta ? versionMeta.content : 'dev';
 
   const savedUnit = (() => { try { return localStorage.getItem('skylark:unit'); } catch (_) { return null; } })();
   if (savedUnit === 'F' || savedUnit === 'C') {
@@ -759,6 +951,12 @@ document.addEventListener('DOMContentLoaded', () => {
     dom.unitC.setAttribute('aria-pressed', String(savedUnit === 'C'));
     dom.unitF.setAttribute('aria-pressed', String(savedUnit === 'F'));
   }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && state.lat != null && state.lon != null && Date.now() - state.lastRefresh >= AUTO_REFRESH_MS) {
+      refreshWeatherData();
+    }
+  });
 
   wireEvents();
   WeatherScene.init(document.getElementById('scene-canvas'), document.getElementById('sky-a'), document.getElementById('sky-b'));
