@@ -786,11 +786,63 @@ function wireInstallPrompt() {
 }
 
 function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+  // The service worker takes over instantly on deploy (skipWaiting + clients.claim
+  // in sw.js), but a tab that's already open keeps showing the HTML it loaded
+  // with until it reloads — without this it can look like a new deploy "didn't
+  // take" (stale footer version, missing features) until the user manually
+  // refreshes twice.
+  let reloadedForUpdate = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloadedForUpdate) return;
+    reloadedForUpdate = true;
+    window.location.reload();
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Version badge                                                          */
+/* ---------------------------------------------------------------------- */
+
+function applyVersionText(text) {
+  if (dom.appVersion) dom.appVersion.textContent = text;
+}
+
+async function updateAppVersion() {
+  const versionMeta = document.querySelector('meta[name="app-version"]');
+  applyVersionText(versionMeta ? versionMeta.content : 'dev');
+
+  // The meta tag above is a manually-set fallback and easy to forget to bump.
+  // On a GitHub Pages project site (owner.github.io/repo/) we can instead ask
+  // GitHub which commit is actually live, so the footer never lags behind.
+  const hostMatch = location.hostname.match(/^([^.]+)\.github\.io$/i);
+  const repo = location.pathname.split('/').filter(Boolean)[0];
+  if (!hostMatch || !repo) return;
+  const owner = hostMatch[1];
+
+  const cacheKey = 'skylark:versionCache';
+  try {
+    const cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+    if (cached && cached.owner === owner && cached.repo === repo && Date.now() - cached.at < 30 * 60 * 1000) {
+      applyVersionText(cached.sha);
+      return;
+    }
+  } catch (_) {}
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits?per_page=1`, {
+      headers: { Accept: 'application/vnd.github+json' },
     });
-  }
+    if (!res.ok) return;
+    const data = await res.json();
+    const sha = data && data[0] && data[0].sha ? data[0].sha.slice(0, 7) : null;
+    if (!sha) return;
+    applyVersionText(sha);
+    try { localStorage.setItem(cacheKey, JSON.stringify({ owner, repo, sha, at: Date.now() })); } catch (_) {}
+  } catch (_) { /* offline or rate-limited — keep the static fallback */ }
 }
 
 /* ---------------------------------------------------------------------- */
@@ -941,9 +993,7 @@ function bootstrapLocation() {
 
 document.addEventListener('DOMContentLoaded', () => {
   cacheDom();
-
-  const versionMeta = document.querySelector('meta[name="app-version"]');
-  if (dom.appVersion) dom.appVersion.textContent = versionMeta ? versionMeta.content : 'dev';
+  updateAppVersion();
 
   const savedUnit = (() => { try { return localStorage.getItem('skylark:unit'); } catch (_) { return null; } })();
   if (savedUnit === 'F' || savedUnit === 'C') {

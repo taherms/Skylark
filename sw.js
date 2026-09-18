@@ -1,6 +1,6 @@
 // Skylark Weather — service worker
 // Bump this on every deploy that changes any cached file, so clients refresh cleanly.
-const CACHE_VERSION = 'skylark-v1';
+const CACHE_VERSION = 'skylark-v2';
 const SHELL_CACHE = `shell-${CACHE_VERSION}`;
 
 // Paths are relative to the service worker's own scope, so this works whether the

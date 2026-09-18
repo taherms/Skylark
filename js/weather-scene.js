@@ -16,19 +16,20 @@ const WeatherScene = (() => {
   const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   // gradient recipes per "mood" — used by the CSS crossfade layers, not canvas
+  // (brighter + more saturated than a literal photo-sky so the app reads as lively)
   const SKY_GRADIENTS = {
-    'clear-day':    'linear-gradient(180deg,#5eaef9 0%,#8ad7ff 36%,#d9f4ff 68%,#fff2d8 100%)',
-    'clear-night':  'linear-gradient(180deg,#121a39 0%,#1f2e6c 38%,#495eaa 70%,#b9c6f4 100%)',
-    'clouds-day':   'linear-gradient(180deg,#77a9d8 0%,#a9d0f8 28%,#dff4ff 62%,#eff9ff 100%)',
-    'clouds-night': 'linear-gradient(180deg,#1a2342 0%,#2d3d67 34%,#536b99 66%,#b8c8eb 100%)',
-    'fog-day':      'linear-gradient(180deg,#a6b4bd 0%,#d1dfe6 40%,#edf7ff 100%)',
-    'fog-night':    'linear-gradient(180deg,#1b2433 0%,#35455f 35%,#5a6d89 100%)',
-    'rain-day':     'linear-gradient(180deg,#4e6f95 0%,#6d8db2 32%,#8fb2c9 62%,#cfe8f4 100%)',
-    'rain-night':   'linear-gradient(180deg,#0d1320 0%,#1c2a3e 35%,#3c4f73 68%,#b5c7d8 100%)',
-    'storm-day':    'linear-gradient(180deg,#2a3d66 0%,#4d5f86 30%,#7288aa 62%,#dce9ff 100%)',
-    'storm-night':  'linear-gradient(180deg,#0c1220 0%,#1a2540 36%,#354a6a 64%,#a7b8db 100%)',
-    'snow-day':     'linear-gradient(180deg,#8db4d6 0%,#cfe6f7 38%,#edf8ff 68%,#f8fbff 100%)',
-    'snow-night':   'linear-gradient(180deg,#19253f 0%,#2f4875 36%,#647ca8 64%,#dfe9ff 100%)',
+    'clear-day':    'linear-gradient(180deg,#3f9dff 0%,#7fd4ff 36%,#c9f3ff 68%,#ffe9b8 100%)',
+    'clear-night':  'linear-gradient(180deg,#161f4d 0%,#2a3f8f 38%,#5568c9 70%,#c7d0ff 100%)',
+    'clouds-day':   'linear-gradient(180deg,#5f9bdc 0%,#95c8ff 28%,#d8f1ff 62%,#f2fbff 100%)',
+    'clouds-night': 'linear-gradient(180deg,#1c275a 0%,#324b8a 34%,#5e78c0 66%,#cbd8ff 100%)',
+    'fog-day':      'linear-gradient(180deg,#9db4c4 0%,#c9dfec 40%,#eef9ff 100%)',
+    'fog-night':    'linear-gradient(180deg,#1e2b45 0%,#3a5375 35%,#6889a8 100%)',
+    'rain-day':     'linear-gradient(180deg,#3b6899 0%,#5d92c2 32%,#86bcda 62%,#c7ecfb 100%)',
+    'rain-night':   'linear-gradient(180deg,#0d1730 0%,#1f3358 35%,#3e5d92 68%,#a9cbe8 100%)',
+    'storm-day':    'linear-gradient(180deg,#233a72 0%,#47619e 30%,#7291c4 62%,#d6ebff 100%)',
+    'storm-night':  'linear-gradient(180deg,#0a1330 0%,#1c2c5c 36%,#37538c 64%,#9fb6e6 100%)',
+    'snow-day':     'linear-gradient(180deg,#78aee0 0%,#c1e6fb 38%,#e9f8ff 68%,#fbfdff 100%)',
+    'snow-night':   'linear-gradient(180deg,#182a52 0%,#345590 36%,#6d90c8 64%,#e5edff 100%)',
   };
 
   let skyA, skyB, activeIsA = true;
@@ -51,12 +52,12 @@ const WeatherScene = (() => {
     const meta = document.getElementById('theme-color-meta');
     if (meta) {
       const themeColors = {
-        'clear-day': '#4A90E2', 'clear-night': '#141a3a',
-        'clouds-day': '#8b9dae', 'clouds-night': '#1d2437',
-        'fog-day': '#a7b1b5', 'fog-night': '#232830',
-        'rain-day': '#556579', 'rain-night': '#141b2b',
-        'storm-day': '#394153', 'storm-night': '#0d0f18',
-        'snow-day': '#8ea2ba', 'snow-night': '#1c2338',
+        'clear-day': '#3f9dff', 'clear-night': '#1a2660',
+        'clouds-day': '#6fa3d0', 'clouds-night': '#28356e',
+        'fog-day': '#9fb0bd', 'fog-night': '#2b374a',
+        'rain-day': '#4a76a3', 'rain-night': '#1a2c4c',
+        'storm-day': '#3a5487', 'storm-night': '#16244a',
+        'snow-day': '#8fb8dd', 'snow-night': '#25407a',
       };
       meta.setAttribute('content', themeColors[key] || '#4A90E2');
     }
@@ -67,6 +68,12 @@ const WeatherScene = (() => {
   let lightningAlpha = 0;
   let nextLightningAt = 0;
   let sunRayAngle = 0;
+
+  // Eased 0..1 driving how much real wind speeds up the animation. Smoothing
+  // avoids a jump the instant the scene changes, and clamping means a gale
+  // never pushes the sky past a calm, legible top speed.
+  let windStrength = 0;
+  function targetWindStrength() { return Math.min(1, sky.windKph / 55); }
 
   function seedStars() {
     stars = [];
@@ -157,16 +164,16 @@ const WeatherScene = (() => {
 
     if (sky.isDay) {
       const r = Math.min(w, h) * 0.09;
-      sunRayAngle += dt * 0.05;
+      sunRayAngle += dt * 0.1;
       ctx.save();
       ctx.globalAlpha = Math.max(0.18, cloudFade);
       const glow = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 2.6);
-      glow.addColorStop(0, 'rgba(255,236,170,0.85)');
-      glow.addColorStop(1, 'rgba(255,236,170,0)');
+      glow.addColorStop(0, 'rgba(255,241,190,0.92)');
+      glow.addColorStop(1, 'rgba(255,225,150,0)');
       ctx.fillStyle = glow;
       ctx.beginPath(); ctx.arc(cx, cy, r * 2.6, 0, Math.PI * 2); ctx.fill();
 
-      ctx.strokeStyle = 'rgba(255,244,214,0.55)';
+      ctx.strokeStyle = 'rgba(255,248,224,0.65)';
       ctx.lineWidth = 3;
       for (let i = 0; i < 10; i++) {
         const a = sunRayAngle + (i / 10) * Math.PI * 2;
@@ -175,7 +182,7 @@ const WeatherScene = (() => {
         ctx.lineTo(cx + Math.cos(a) * r * 1.65, cy + Math.sin(a) * r * 1.65);
         ctx.stroke();
       }
-      ctx.fillStyle = '#ffe9a8';
+      ctx.fillStyle = '#ffdd7a';
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     } else {
@@ -214,7 +221,7 @@ const WeatherScene = (() => {
   function drawCloud(cx, cy, scale, alpha) {
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = sky.isDay ? 'rgba(255,255,255,0.92)' : 'rgba(120,130,155,0.55)';
+    ctx.fillStyle = sky.isDay ? 'rgba(255,255,255,0.95)' : 'rgba(152,162,196,0.62)';
     const puffs = [[0, 0, 34], [26, -8, 26], [-28, -6, 24], [50, 4, 20], [-48, 6, 18], [8, 10, 30]];
     for (const [ox, oy, r] of puffs) {
       ctx.beginPath();
@@ -224,23 +231,21 @@ const WeatherScene = (() => {
     ctx.restore();
   }
 
-  function windAnimationStrength() {
-    return Math.min(1, sky.windKph / 42);
-  }
-
   function drawClouds(dt) {
-    const windBoost = 0.1 + windAnimationStrength() * 1.2;
+    // dt is seconds; c.speed is a "screen-widths-per-second"-scale constant, so
+    // this drifts clouds fully across the sky in tens of seconds, not frames.
+    const windBoost = 0.5 + windStrength * 1.5;
     for (const c of clouds) {
-      c.x += (c.speed * dt) / (w || 1) * windBoost;
+      c.x += (c.speed * windBoost * dt) / (w || 1);
       if (c.x > 1.25) c.x = -0.25;
-      const alpha = 0.62 + c.depth * 0.38;
+      const alpha = 0.68 + c.depth * 0.32;
       drawCloud(c.x * w, c.y * h, c.scale, alpha);
     }
   }
 
   function drawMist(dt) {
     for (const m of mist) {
-      m.x += (m.speed * dt) / (w || 1) * 0.03;
+      m.x += (m.speed * dt) / (w || 1);
       if (m.x > 1.4) m.x = -0.4;
       ctx.save();
       ctx.globalAlpha = m.alpha;
@@ -259,7 +264,7 @@ const WeatherScene = (() => {
 
   function drawRain(dt) {
     if (!rain.length) return;
-    const maxWindLean = Math.max(-1.0, Math.min(1.0, sky.windKph / 35)) * windAnimationStrength();
+    const maxWindLean = Math.max(-1.0, Math.min(1.0, sky.windKph / 45)) * windStrength;
     ctx.save();
     ctx.strokeStyle = sky.isDay ? 'rgba(210,228,245,0.8)' : 'rgba(150,175,210,0.7)';
     ctx.lineWidth = 1.5;
@@ -280,13 +285,12 @@ const WeatherScene = (() => {
 
   function drawSnow(dt, t) {
     if (!snow.length) return;
-    const windDrift = windAnimationStrength();
     ctx.save();
     ctx.fillStyle = 'rgba(255,255,255,0.96)';
     for (const s of snow) {
       s.y += (s.speed * dt) / (h || 1);
-      const driftX = Math.sin(t * 0.001 * s.driftSpeed + s.drift) * 0.012;
-      s.x += driftX * dt * 0.09 + (sky.windKph / 2200) * windDrift * dt;
+      const driftX = Math.sin(t * 0.001 * s.driftSpeed + s.drift) * 0.05;
+      s.x += driftX * dt + (sky.windKph / 700) * windStrength * dt;
       if (s.y > 1.05) { s.y = -0.05; s.x = Math.random(); }
       if (s.x > 1.05) s.x = -0.05;
       if (s.x < -0.05) s.x = 1.05;
@@ -315,8 +319,10 @@ const WeatherScene = (() => {
 
   function frame(now) {
     if (!last) last = now;
-    const dt = Math.min(50, now - last);
+    const dtMs = Math.min(50, now - last); // clamp guards against big jumps after tab-away
     last = now;
+    const dt = dtMs / 1000; // seconds — every particle speed below is tuned per second
+    windStrength += (targetWindStrength() - windStrength) * Math.min(1, dt * 1.5);
     ctx.clearRect(0, 0, w, h);
 
     drawStars(dt, now);
