@@ -77,6 +77,20 @@ function emojiFor(category, isDay) {
 const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 function degToCompass(deg) { return COMPASS[Math.round(((deg % 360) + 360) % 360 / 22.5) % 16]; }
 
+// Open-Meteo's moon_phase is a 0..1 fraction of the synodic month (0/1 = new, 0.5 = full).
+function moonPhaseInfo(fraction) {
+  if (fraction == null) return { label: '—', emoji: '🌙' };
+  const f = ((fraction % 1) + 1) % 1;
+  if (f < 0.03 || f >= 0.97) return { label: 'New moon', emoji: '🌑' };
+  if (f < 0.22) return { label: 'Waxing crescent', emoji: '🌒' };
+  if (f < 0.28) return { label: 'First quarter', emoji: '🌓' };
+  if (f < 0.47) return { label: 'Waxing gibbous', emoji: '🌔' };
+  if (f < 0.53) return { label: 'Full moon', emoji: '🌕' };
+  if (f < 0.72) return { label: 'Waning gibbous', emoji: '🌖' };
+  if (f < 0.78) return { label: 'Last quarter', emoji: '🌗' };
+  return { label: 'Waning crescent', emoji: '🌘' };
+}
+
 /* ---------------------------------------------------------------------- */
 /* Unit + formatting helpers                                              */
 /* ---------------------------------------------------------------------- */
@@ -125,7 +139,7 @@ async function fetchWeather(lat, lon) {
       'weather_code', 'cloud_cover', 'pressure_msl', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'].join(','),
     hourly: ['temperature_2m', 'apparent_temperature', 'precipitation_probability', 'precipitation', 'weather_code',
       'relative_humidity_2m', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'visibility', 'is_day'].join(','),
-    daily: ['temperature_2m_max', 'temperature_2m_min', 'uv_index_max', 'precipitation_probability_max', 'precipitation_sum', 'sunrise', 'sunset'].join(','),
+    daily: ['temperature_2m_max', 'temperature_2m_min', 'uv_index_max', 'precipitation_probability_max', 'precipitation_sum', 'sunrise', 'sunset', 'moonrise', 'moonset', 'moon_phase'].join(','),
     timezone: 'auto', forecast_days: '3', wind_speed_unit: 'kmh',
   });
   const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
@@ -172,8 +186,12 @@ function makeDemoWeatherPayload(preset) {
 
   const dailyMax = Math.max(...hourlyTemperatures);
   const dailyMin = Math.min(...hourlyTemperatures);
-  const sunrise = new Date(now.getTime() + 6 * 60 * 60 * 1000).toISOString();
-  const sunset = new Date(now.getTime() + 18 * 60 * 60 * 1000).toISOString();
+  // Straddle "now" (rather than starting in the future) so the demo sun shows
+  // up mid-arc immediately instead of failing the rise/set check and hiding.
+  const sunrise = new Date(now.getTime() - 5 * 60 * 60 * 1000).toISOString();
+  const sunset = new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString();
+  const moonrise = new Date(now.getTime() + 14 * 60 * 60 * 1000).toISOString();
+  const moonset = new Date(now.getTime() + 26 * 60 * 60 * 1000).toISOString();
 
   return {
     latitude: 0,
@@ -214,6 +232,9 @@ function makeDemoWeatherPayload(preset) {
       precipitation_sum: [hourlyPrecip.reduce((sum, value) => sum + value, 0)],
       sunrise: [sunrise],
       sunset: [sunset],
+      moonrise: [moonrise],
+      moonset: [moonset],
+      moon_phase: [0.42],
     },
   };
 }
@@ -270,8 +291,12 @@ function loadDemoWeatherPreset(modeId, label) {
     hourly: { time: payload.hourly.time, us_aqi: Array.from({ length: 24 }, (_, i) => Math.max(10, preset.aqi + Math.sin(i / 2.7) * 18)) },
   };
   state.lastRefresh = Date.now();
-  render();
+  // Reveal the hourly section before rendering into it — the chart canvas
+  // reads its own clientWidth/clientHeight, which are 0 while its container
+  // is still display:none, so drawing into it first produces a blank chart
+  // that only fixes itself once something (e.g. a tab click) re-renders it.
   showState('content');
+  render();
   scheduleAutoRefresh();
 }
 
@@ -336,8 +361,10 @@ async function loadLocation(lat, lon, label, options = {}) {
     state.lat = lat; state.lon = lon; state.placeName = label;
     state.rawWeather = weatherData; state.rawAqi = aqiData;
     state.lastRefresh = Date.now();
-    render();
+    // Reveal the hourly section before rendering into it — see the note in
+    // loadDemoWeatherPreset for why the order matters for the chart canvas.
     if (!silent && !refreshOnly) showState('content');
+    render();
     if (!state.rawWeather || !state.rawWeather.current) return;
     scheduleAutoRefresh();
   } catch (err) {
@@ -633,11 +660,21 @@ function render() {
   const nowIndexAqi = aqiData && aqiData.hourly ? findNowIndex(aqiData.hourly.time, aqiData.current.time) : 0;
   const sunrise = daily.sunrise && daily.sunrise[0] ? parseLocal(daily.sunrise[0]) : null;
   const sunset = daily.sunset && daily.sunset[0] ? parseLocal(daily.sunset[0]) : null;
+  // Moonset can fall after midnight and come back null for "today" in the daily
+  // array — fall back to tomorrow's row so a late-setting moon still shows.
+  const moonrise = daily.moonrise && daily.moonrise[0] ? parseLocal(daily.moonrise[0]) : null;
+  const moonsetRaw = (daily.moonset && (daily.moonset[0] || daily.moonset[1])) || null;
+  const moonset = moonsetRaw ? parseLocal(moonsetRaw) : null;
+  const moonPhase = daily.moon_phase ? daily.moon_phase[0] : null;
+  const moonInfo = moonPhaseInfo(moonPhase);
 
   // --- header / location ---
   dom.heroLocation.textContent = state.placeName;
   dom.heroUpdated.textContent = 'Updated ' + parseLocal(cur.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   dom.sunTimes.textContent = `${sunrise ? 'Sunrise ' + sunrise.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Sunrise —'} · ${sunset ? 'Sunset ' + sunset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Sunset —'}`;
+  if (dom.moonTimes) {
+    dom.moonTimes.textContent = `${moonInfo.emoji} ${moonInfo.label} · ${moonrise ? 'Moonrise ' + moonrise.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Moonrise —'} · ${moonset ? 'Moonset ' + moonset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Moonset —'}`;
+  }
 
   // --- hero temperature ---
   dom.tempValue.textContent = formatTemp(cur.temperature_2m);
@@ -682,6 +719,7 @@ function render() {
   WeatherScene.setScene({
     category: info.category, code: cur.weather_code, isDay,
     windKph: cur.wind_speed_10m, precipMm: cur.precipitation, feelsLike: cur.apparent_temperature,
+    sunrise, sunset, moonrise, moonset, moonPhase, now: parseLocal(cur.time),
   });
 
   // --- hourly strip + charts ---
@@ -864,7 +902,7 @@ function cacheDom() {
     chipUv: byId('chip-uv'), chipUvSub: byId('chip-uv-sub'), chipPressure: byId('chip-pressure'),
     chipVisibility: byId('chip-visibility'), chipVisibilitySub: byId('chip-visibility-sub'),
     hourStrip: byId('hour-strip'), chartCanvas: byId('chart-canvas'), chartLegend: byId('chart-legend'), chartTooltip: byId('chart-tooltip'),
-    guidanceGrid: byId('guidance-grid'), sunTimes: byId('sun-times'),
+    guidanceGrid: byId('guidance-grid'), sunTimes: byId('sun-times'), moonTimes: byId('moon-times'),
     searchForm: byId('search-form'), searchInput: byId('search-input'), resultsPanel: byId('results-panel'),
     locateBtn: byId('locate-btn'), unitC: byId('unit-c'), unitF: byId('unit-f'), scrollCue: byId('scroll-cue'),
     installBanner: byId('install-banner'), installBtn: byId('install-btn'), installDismiss: byId('install-dismiss'), installCopy: byId('install-copy'),
@@ -954,11 +992,13 @@ function showChartTooltip(event) {
   const n = state.chartData.labels.length;
   const index = Math.max(0, Math.min(n - 1, Math.round(((x - padL) / Math.max(innerW, 1)) * (n - 1))));
   const metric = state.activeMetric || 'temp';
-  const value = state.chartConfig.series[0].data[index];
   const time = state.chartData.labels[index];
-  const valueText = chartValueLabel(metric, value);
+  const rows = state.chartConfig.series.map((s) => {
+    const dotColor = (s.barColors && s.barColors[index]) || s.color;
+    return `<span class="tt-row"><i class="tt-dot" style="background:${dotColor}"></i>${s.name}: <strong>${chartValueLabel(metric, s.data[index])}</strong></span>`;
+  }).join('');
 
-  dom.chartTooltip.innerHTML = `<strong>${valueText}</strong><span>${time}</span>`;
+  dom.chartTooltip.innerHTML = `<span class="tt-time">${time}</span>${rows}`;
   const left = Math.min(Math.max(x, 28), W - 28);
   dom.chartTooltip.style.left = `${left}px`;
   dom.chartTooltip.style.top = `${Math.max(18, rect.height * 0.38)}px`;

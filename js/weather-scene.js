@@ -64,7 +64,7 @@ const WeatherScene = (() => {
   }
 
   /* ---------------------------- particle stores ---------------------------- */
-  let rain = [], snow = [], stars = [], clouds = [], mist = [];
+  let rain = [], snow = [], stars = [], clouds = [], mist = [], leaves = [];
   let lightningAlpha = 0;
   let nextLightningAt = 0;
   let sunRayAngle = 0;
@@ -117,6 +117,24 @@ const WeatherScene = (() => {
     }
   }
 
+  function seedLeaves() {
+    // A handful of leaves drifting through the lower sky — the one thing on
+    // screen that visibly answers "is it windy?" on a plain clear or cloudy
+    // day, when there's no rain/snow to carry that signal.
+    leaves = [];
+    for (let i = 0; i < 6; i++) {
+      leaves.push({
+        x: Math.random(), y: 0.42 + Math.random() * 0.44,
+        size: 4.5 + Math.random() * 4,
+        rot: Math.random() * Math.PI * 2,
+        spinDir: Math.random() < 0.5 ? -1 : 1,
+        bobPhase: Math.random() * Math.PI * 2,
+        bobSpeed: 0.5 + Math.random() * 0.5,
+        tint: Math.random(),
+      });
+    }
+  }
+
   function seedRain(intensity) {
     rain = [];
     if (intensity <= 0) return;
@@ -157,10 +175,98 @@ const WeatherScene = (() => {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
+  // Where the sun/moon sits along its arc right now, based on real progress
+  // between its rise and set time — not just a fixed decorative spot.
+  function arcPosition(progress) {
+    const c = Math.max(0, Math.min(1, progress));
+    return { x: 0.14 + c * 0.72, y: 0.68 - Math.sin(c * Math.PI) * 0.56 };
+  }
+
+  // The weather API reports times as the location's local wall clock with no
+  // UTC offset, so `new Date(...)` on those strings is only meaningful relative
+  // to other timestamps from the same payload — comparing it against a raw
+  // Date.now() (a real UTC instant) silently breaks whenever the browser's own
+  // timezone differs from the forecast location's. Anchor "now" to the
+  // observation time the weather payload itself reported, then advance it by
+  // real elapsed wall-clock time so the arc still ticks forward live between
+  // refreshes.
+  function currentClockMs() {
+    if (sky.nowMs == null) return Date.now();
+    return sky.nowMs + (Date.now() - sky.nowSetAtReal);
+  }
+
+  function riseSetProgress(riseMs, setMs) {
+    if (!riseMs || !setMs || setMs <= riseMs) return null;
+    const now = currentClockMs();
+    if (now < riseMs || now > setMs) return null;
+    return (now - riseMs) / (setMs - riseMs);
+  }
+
+  function drawMoonDisc(cx, cy, r, phase) {
+    // Warm, cartoonish palette (cream + soft plum) instead of clinical grey —
+    // matches the mascot's flat, friendly illustration style.
+    const litColor = '#fff6da';
+    const darkColor = 'rgba(58,50,86,0.92)';
+    const angle = ((phase % 1) + 1) % 1 * Math.PI * 2; // 0 new, PI full, 2PI new
+    const litRight = angle < Math.PI;
+    const a = litRight ? angle : (2 * Math.PI - angle); // fold into 0..PI
+    const rx = r * Math.cos(a); // + thin crescent near new, - near-full bulge near full
+    const illum = (1 - Math.cos(angle)) / 2; // 0 new .. 1 full
+
+    ctx.save();
+    ctx.fillStyle = darkColor;
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+
+    ctx.save();
+    ctx.beginPath();
+    if (litRight) {
+      ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, false);
+      if (rx >= 0) ctx.ellipse(cx, cy, rx, r, 0, Math.PI / 2, -Math.PI / 2, true);
+      else ctx.ellipse(cx, cy, -rx, r, 0, Math.PI / 2, Math.PI * 1.5, false);
+    } else {
+      ctx.arc(cx, cy, r, Math.PI / 2, Math.PI * 1.5, false);
+      if (rx >= 0) ctx.ellipse(cx, cy, rx, r, 0, Math.PI * 1.5, Math.PI / 2, true);
+      else ctx.ellipse(cx, cy, -rx, r, 0, -Math.PI / 2, Math.PI / 2, false);
+    }
+    ctx.closePath();
+    ctx.fillStyle = litColor;
+    ctx.fill();
+    ctx.clip(); // keep craters/face confined to exactly the lit shape, even for a thin crescent
+
+    ctx.fillStyle = 'rgba(226,203,150,0.55)';
+    ctx.beginPath(); ctx.arc(cx - r * 0.3, cy - r * 0.34, r * 0.13, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + r * 0.24, cy + r * 0.02, r * 0.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx - r * 0.04, cy + r * 0.36, r * 0.08, 0, Math.PI * 2); ctx.fill();
+
+    // a sleepy little face only peeks out once the moon is more than half full —
+    // a sliver of crescent is too thin to hold a face without looking broken.
+    if (illum > 0.55) {
+      ctx.globalAlpha = Math.min(1, (illum - 0.55) / 0.2);
+      const faceX = cx + (litRight ? r * 0.16 : -r * 0.16);
+      ctx.strokeStyle = 'rgba(90,72,48,0.75)';
+      ctx.lineWidth = Math.max(1.3, r * 0.05);
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(faceX - r * 0.24, cy - r * 0.05, r * 0.12, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+      ctx.beginPath(); ctx.arc(faceX + r * 0.22, cy - r * 0.05, r * 0.12, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
+      ctx.beginPath(); ctx.arc(faceX, cy + r * 0.2, r * 0.15, Math.PI * 0.12, Math.PI * 0.88); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,182,160,0.5)';
+      ctx.beginPath(); ctx.ellipse(faceX - r * 0.38, cy + r * 0.12, r * 0.09, r * 0.06, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(faceX + r * 0.38, cy + r * 0.12, r * 0.09, r * 0.06, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    ctx.restore();
+  }
+
   function drawSunOrMoon(dt) {
-    const cx = w * 0.78, cy = h * 0.16 + (window.scrollY || 0) * 0.02;
-    const cloudFade = 1 - Math.min(sky.cloudLevel, 3) * 0.24;
     if (sky.category === 'fog') return;
+    // Only draw the body once we can confirm it has actually risen and hasn't
+    // set yet — no rise/set data (or a moon that hasn't come up) means it
+    // simply isn't shown, rather than pinning it to a decorative fixed spot.
+    const progress = riseSetProgress(sky.isDay ? sky.sunriseMs : sky.moonriseMs, sky.isDay ? sky.sunsetMs : sky.moonsetMs);
+    if (progress == null) return;
+    const pos = arcPosition(progress);
+    const cx = w * pos.x, cy = h * pos.y + (window.scrollY || 0) * 0.02;
+    const cloudFade = 1 - Math.min(sky.cloudLevel, 3) * 0.24;
 
     if (sky.isDay) {
       const r = Math.min(w, h) * 0.09;
@@ -186,20 +292,16 @@ const WeatherScene = (() => {
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     } else {
-      const r = Math.min(w, h) * 0.075;
+      const r = Math.min(w, h) * 0.085;
       ctx.save();
       ctx.globalAlpha = Math.max(0.25, cloudFade);
       const glow = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, r * 2.2);
-      glow.addColorStop(0, 'rgba(220,228,255,0.35)');
-      glow.addColorStop(1, 'rgba(220,228,255,0)');
+      glow.addColorStop(0, 'rgba(255,240,205,0.4)');
+      glow.addColorStop(1, 'rgba(255,240,205,0)');
       ctx.fillStyle = glow;
       ctx.beginPath(); ctx.arc(cx, cy, r * 2.2, 0, Math.PI * 2); ctx.fill();
 
-      ctx.fillStyle = '#eef1fb';
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(180,190,220,0.45)';
-      ctx.beginPath(); ctx.arc(cx - r * 0.32, cy - r * 0.18, r * 0.22, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(cx + r * 0.28, cy + r * 0.3, r * 0.16, 0, Math.PI * 2); ctx.fill();
+      drawMoonDisc(cx, cy, r, sky.moonPhase != null ? sky.moonPhase : 0.5);
       ctx.restore();
     }
   }
@@ -241,6 +343,41 @@ const WeatherScene = (() => {
       const alpha = 0.68 + c.depth * 0.32;
       drawCloud(c.x * w, c.y * h, c.scale, alpha);
     }
+  }
+
+  function drawLeaves(dt, now) {
+    if (sky.category === 'snow') return; // leaves blowing through falling snow reads as a bug, not wind
+    // Speed and visibility both track windStrength directly, so a calm day
+    // barely stirs them while a breeze makes the drift unmistakable — capped
+    // at the same smooth ceiling as the clouds.
+    const speed = 0.012 + windStrength * 0.15;
+    const visibility = Math.min(1, 0.12 + windStrength * 1.5);
+    if (visibility <= 0.03) return;
+    const dayColors = ['#e8a25b', '#d98b46', '#c9c15b'];
+    const nightColors = ['#8f97b8', '#7c84a8', '#9aa0c2'];
+    const palette = sky.isDay ? dayColors : nightColors;
+    ctx.save();
+    for (const lf of leaves) {
+      lf.x += speed * dt;
+      if (lf.x > 1.08) { lf.x = -0.08; lf.y = 0.42 + Math.random() * 0.44; }
+      lf.rot += lf.spinDir * (0.3 + windStrength * 1.4) * dt;
+      const bob = Math.sin(now * 0.001 * lf.bobSpeed + lf.bobPhase) * 0.018;
+      const x = lf.x * w, y = (lf.y + bob) * h;
+      const size = lf.size * (w / 800 || 1);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(lf.rot);
+      ctx.globalAlpha = visibility;
+      ctx.fillStyle = palette[Math.floor(lf.tint * palette.length)];
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size, size * 0.58, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(-size * 0.9, 0); ctx.lineTo(size * 0.9, 0); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   function drawMist(dt) {
@@ -329,6 +466,7 @@ const WeatherScene = (() => {
     drawSunOrMoon(dt);
     if (sky.category === 'fog') drawMist(dt);
     else drawClouds(dt);
+    drawLeaves(dt, now);
     drawRain(dt);
     drawSnow(dt, now);
     drawLightning(dt, now);
@@ -390,15 +528,22 @@ const WeatherScene = (() => {
     ctx = canvas.getContext('2d');
     skyA = skyAEl; skyB = skyBEl;
     seedStars();
+    seedLeaves();
     window.addEventListener('resize', resize);
     resize();
     if (!reduceMotion) raf = requestAnimationFrame(frame);
     else frame(performance.now());
   }
 
-  function setScene({ category, code, isDay, windKph = 8, precipMm = 0, feelsLike }) {
+  function setScene({ category, code, isDay, windKph = 8, precipMm = 0, feelsLike, sunrise, sunset, moonrise, moonset, moonPhase, now }) {
     const changed = category !== sky.category || isDay !== sky.isDay;
-    sky = { category, isDay, windKph, precipMm, feelsLike, cloudLevel: cloudLevelFor(category, code) };
+    sky = {
+      category, isDay, windKph, precipMm, feelsLike, cloudLevel: cloudLevelFor(category, code),
+      sunriseMs: sunrise ? sunrise.getTime() : null, sunsetMs: sunset ? sunset.getTime() : null,
+      moonriseMs: moonrise ? moonrise.getTime() : null, moonsetMs: moonset ? moonset.getTime() : null,
+      moonPhase: moonPhase != null ? moonPhase : null,
+      nowMs: now ? now.getTime() : null, nowSetAtReal: Date.now(),
+    };
 
     if (changed) applySkyGradient();
 
