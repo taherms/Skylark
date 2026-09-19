@@ -21,7 +21,7 @@ let dom = {};
 let toastTimer = null;
 let searchDebounceTimer = null;
 let deferredInstallPrompt = null;
-const AUTO_REFRESH_MS = 5 * 60 * 1000;
+const AUTO_REFRESH_MS = 2 * 60 * 1000;
 
 /* ---------------------------------------------------------------------- */
 /* Lookup tables                                                          */
@@ -386,13 +386,15 @@ async function refreshWeatherData() {
   await loadLocation(state.lat, state.lon, state.placeName, { silent: true, refreshOnly: true });
 }
 
+function refreshIfStale() {
+  if (document.visibilityState !== 'visible') return;
+  if (state.lat == null || state.lon == null) return;
+  if (Date.now() - state.lastRefresh >= AUTO_REFRESH_MS) refreshWeatherData();
+}
+
 function scheduleAutoRefresh() {
   clearInterval(state.autoRefreshTimer);
-  state.autoRefreshTimer = setInterval(() => {
-    if (document.visibilityState !== 'visible') return;
-    if (state.lat == null || state.lon == null) return;
-    if (Date.now() - state.lastRefresh >= AUTO_REFRESH_MS) refreshWeatherData();
-  }, 60000);
+  state.autoRefreshTimer = setInterval(refreshIfStale, 15000);
 }
 
 function useMyLocation() {
@@ -1042,11 +1044,12 @@ document.addEventListener('DOMContentLoaded', () => {
     dom.unitF.setAttribute('aria-pressed', String(savedUnit === 'F'));
   }
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && state.lat != null && state.lon != null && Date.now() - state.lastRefresh >= AUTO_REFRESH_MS) {
-      refreshWeatherData();
-    }
-  });
+  // Background tabs get their setInterval throttled hard by the browser (especially
+  // on mobile), so the periodic tick alone can't be trusted to catch up promptly —
+  // also check the moment the tab/window is actually looked at again.
+  document.addEventListener('visibilitychange', refreshIfStale);
+  window.addEventListener('focus', refreshIfStale);
+  window.addEventListener('pageshow', refreshIfStale);
 
   wireEvents();
   WeatherScene.init(document.getElementById('scene-canvas'), document.getElementById('sky-a'), document.getElementById('sky-b'));
