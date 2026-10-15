@@ -118,6 +118,8 @@ const Charts = (() => {
       });
     }
 
+    drawSelection(ctx, opts, n, padL, padR, padT, padB, innerW, innerH, scale.min, scale.max, visibleN);
+
     drawXLabels(ctx, labels, H, padL, padR, padB, Math.max(1, Math.round(n / 6)), opts.textColor);
   }
 
@@ -157,7 +159,29 @@ const Charts = (() => {
       ctx.restore();
     }
 
+    drawSelection(ctx, opts, n, padL, padR, padT, padB, innerW, innerH, scale.min, scale.max, visibleN);
+
     drawXLabels(ctx, labels, H, padL, padR, padB, Math.max(1, Math.round(n / 6)), opts.textColor);
+  }
+
+  function drawSelection(ctx, opts, n, padL, padR, padT, padB, innerW, innerH, yMin, yMax, visibleN) {
+    const i = opts.selectedIndex;
+    if (!Number.isInteger(i) || i < 0 || i >= visibleN) return;
+    const x = xAt(i, n, padL, innerW);
+    ctx.save();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, opts.H - padB); ctx.stroke();
+    if (opts.type !== 'bar') {
+      opts.series.forEach((s) => {
+        const y = yAt(s.data[i], yMin, yMax, padT, innerH);
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = s.color; ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.stroke();
+      });
+    }
+    ctx.restore();
   }
 
   function roundRect(ctx, x, y, w, h, r) {

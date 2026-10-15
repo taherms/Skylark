@@ -397,12 +397,18 @@ main {
   margin-top: 26px;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
+  grid-auto-rows: minmax(96px, 1fr);
   gap: 10px;
 }
 @media (max-width: 480px) {
-  .chip-grid { grid-template-columns: repeat(2, 1fr); }
+  .chip-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 }
 .chip {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   background: var(--glass-fill);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
@@ -419,6 +425,7 @@ main {
 .chip-head {
   display: flex;
   align-items: center;
+  min-height: 30px;
   gap: 6px;
   font-size: 11.5px;
   opacity: 0.78;
@@ -434,6 +441,7 @@ main {
 }
 .chip-sub {
   font-size: 11px;
+  line-height: 1.25;
   opacity: 0.68;
   margin-top: 2px;
 }
@@ -495,6 +503,12 @@ main {
 }
 .hour-strip::-webkit-scrollbar { display: none; }
 .hour-card {
+  appearance: none;
+  color: inherit;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
   flex: none;
   width: 62px;
   display: flex;
@@ -510,6 +524,8 @@ main {
   background: rgba(255,255,255,0.14);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.2);
 }
+.hour-card.is-selected { outline: 2px solid rgba(255,255,255,0.9); outline-offset: -2px; background: rgba(255,255,255,0.2); }
+.hour-card:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 .hour-time { font-size: 12px; opacity: 0.85; font-weight: 600; }
 .hour-icon { width: 26px; height: 26px; }
 .hour-temp { font-family: var(--font-display); font-size: 15px; font-weight: 600; }

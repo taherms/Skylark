@@ -11,7 +11,7 @@ const state = {
   unit: 'C',
   lat: null, lon: null, placeName: '',
   rawWeather: null, rawAqi: null,
-  chartData: null, activeMetric: 'temp',
+  chartData: null, activeMetric: 'temp', selectedHour: 0,
   chartConfig: null,
   lastResults: [],
   lastRefresh: 0,
@@ -138,7 +138,7 @@ async function fetchWeather(lat, lon) {
     current: ['temperature_2m', 'relative_humidity_2m', 'apparent_temperature', 'is_day', 'precipitation',
       'weather_code', 'cloud_cover', 'pressure_msl', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'].join(','),
     hourly: ['temperature_2m', 'apparent_temperature', 'precipitation_probability', 'precipitation', 'weather_code',
-      'relative_humidity_2m', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'visibility', 'is_day'].join(','),
+      'relative_humidity_2m', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'visibility', 'cloud_cover', 'is_day'].join(','),
     daily: ['temperature_2m_max', 'temperature_2m_min', 'uv_index_max', 'precipitation_probability_max', 'precipitation_sum', 'sunrise', 'sunset', 'moonrise', 'moonset', 'moon_phase'].join(','),
     timezone: 'auto', forecast_days: '3', wind_speed_unit: 'kmh',
   });
@@ -172,17 +172,18 @@ const DEMO_WEATHER_PRESETS = [
 function makeDemoWeatherPayload(preset) {
   const now = new Date();
   const toIso = (offsetHours) => new Date(now.getTime() + offsetHours * 60 * 60 * 1000).toISOString();
-  const times = Array.from({ length: 24 }, (_, i) => toIso(i));
-  const hourlyTemperatures = Array.from({ length: 24 }, (_, i) => preset.temp + Math.sin(i / 3.3) * 4.5);
-  const hourlyFeels = Array.from({ length: 24 }, (_, i) => preset.feelsLike + Math.sin((i + 1) / 3.7) * 3.2);
-  const hourlyPop = Array.from({ length: 24 }, (_, i) => Math.max(0, Math.min(100, preset.category === 'rain' ? 60 + Math.sin(i / 2.6) * 25 : preset.category === 'storm' ? 75 + Math.sin(i / 2.1) * 18 : preset.category === 'snow' ? 45 + Math.sin(i / 2.8) * 25 : 10 + i * 0.8)));
-  const hourlyPrecip = Array.from({ length: 24 }, (_, i) => preset.precip > 0 ? Math.max(0, preset.precip * (0.45 + (Math.cos(i / 2.6) + 1) / 4)) : 0);
-  const hourlyWind = Array.from({ length: 24 }, (_, i) => Math.max(0, preset.windKph + Math.sin(i / 2.2) * 6));
-  const hourlyGust = Array.from({ length: 24 }, (_, i) => Math.max(0, preset.windKph * 1.4 + Math.sin(i / 1.7) * 10));
-  const hourlyHumidity = Array.from({ length: 24 }, (_, i) => preset.humidity + Math.sin((i + 3) / 2.4) * 18);
-  const hourlyUv = Array.from({ length: 24 }, (_, i) => Math.max(0, preset.uv + Math.sin(i / 2.1) * 2));
-  const hourlyVisibility = Array.from({ length: 24 }, (_, i) => Math.max(200, preset.visibility + Math.sin(i / 2.8) * 2500));
-  const weatherCodes = Array.from({ length: 24 }, () => preset.weatherCode);
+  const times = Array.from({ length: 48 }, (_, i) => toIso(i));
+  const hourlyTemperatures = Array.from({ length: 48 }, (_, i) => preset.temp + Math.sin(i / 3.3) * 4.5);
+  const hourlyFeels = Array.from({ length: 48 }, (_, i) => preset.feelsLike + Math.sin((i + 1) / 3.7) * 3.2);
+  const hourlyPop = Array.from({ length: 48 }, (_, i) => Math.max(0, Math.min(100, preset.category === 'rain' ? 60 + Math.sin(i / 2.6) * 25 : preset.category === 'storm' ? 75 + Math.sin(i / 2.1) * 18 : preset.category === 'snow' ? 45 + Math.sin(i / 2.8) * 25 : 10 + i * 0.8)));
+  const hourlyPrecip = Array.from({ length: 48 }, (_, i) => preset.precip > 0 ? Math.max(0, preset.precip * (0.45 + (Math.cos(i / 2.6) + 1) / 4)) : 0);
+  const hourlyWind = Array.from({ length: 48 }, (_, i) => Math.max(0, preset.windKph + Math.sin(i / 2.2) * 6));
+  const hourlyGust = Array.from({ length: 48 }, (_, i) => Math.max(0, preset.windKph * 1.4 + Math.sin(i / 1.7) * 10));
+  const hourlyHumidity = Array.from({ length: 48 }, (_, i) => preset.humidity + Math.sin((i + 3) / 2.4) * 18);
+  const hourlyUv = Array.from({ length: 48 }, (_, i) => Math.max(0, preset.uv + Math.sin(i / 2.1) * 2));
+  const hourlyVisibility = Array.from({ length: 48 }, (_, i) => Math.max(200, preset.visibility + Math.sin(i / 2.8) * 2500));
+  const hourlyCloud = Array.from({ length: 48 }, (_, i) => Math.max(0, Math.min(100, preset.category === 'clear' ? 18 + Math.sin(i / 4) * 12 : 68 + Math.sin(i / 4) * 20)));
+  const weatherCodes = Array.from({ length: 48 }, () => preset.weatherCode);
 
   const dailyMax = Math.max(...hourlyTemperatures);
   const dailyMin = Math.min(...hourlyTemperatures);
@@ -222,7 +223,8 @@ function makeDemoWeatherPayload(preset) {
       wind_gusts_10m: hourlyGust,
       uv_index: hourlyUv,
       visibility: hourlyVisibility,
-      is_day: Array.from({ length: 24 }, () => 1),
+      cloud_cover: hourlyCloud,
+      is_day: Array.from({ length: 48 }, (_, i) => (new Date(times[i]).getUTCHours() >= 6 && new Date(times[i]).getUTCHours() < 18) ? 1 : 0),
     },
     daily: {
       temperature_2m_max: [dailyMax],
@@ -538,7 +540,7 @@ function renderGuidance(ctx) {
 
 function renderHourStrip(hourly, nowIndex) {
   const items = [];
-  const end = Math.min(hourly.time.length, nowIndex + 24);
+  const end = Math.min(hourly.time.length, nowIndex + 48);
   for (let i = nowIndex; i < end; i++) {
     const d = parseLocal(hourly.time[i]);
     const label = i === nowIndex ? 'Now' : hourLabel(d);
@@ -546,18 +548,18 @@ function renderHourStrip(hourly, nowIndex) {
     const emoji = emojiFor(cat, hourly.is_day[i] === 1);
     const t = formatTemp(hourly.temperature_2m[i]);
     const pop = hourly.precipitation_probability ? hourly.precipitation_probability[i] : null;
-    items.push(`<div class="hour-card ${i === nowIndex ? 'is-now' : ''}">
-      <div class="hour-time">${label}</div>
-      <div class="hour-icon" aria-hidden="true" style="font-size:22px;line-height:1">${emoji}</div>
-      <div class="hour-temp">${t}°</div>
-      ${pop != null && pop >= 20 ? `<div class="hour-pop">${Math.round(pop)}%</div>` : '<div class="hour-pop">&nbsp;</div>'}
-    </div>`);
+    items.push(`<button type="button" class="hour-card ${i === nowIndex ? 'is-now' : ''} ${i === state.selectedHour ? 'is-selected' : ''}" data-hour-index="${i}" aria-pressed="${i === state.selectedHour}" aria-label="${label}, ${t} degrees">
+      <span class="hour-time">${label}</span>
+      <span class="hour-icon" aria-hidden="true" style="font-size:22px;line-height:1">${emoji}</span>
+      <span class="hour-temp">${t}°</span>
+      ${pop != null && pop >= 20 ? `<span class="hour-pop">${Math.round(pop)}%</span>` : '<span class="hour-pop">&nbsp;</span>'}
+    </button>`);
   }
   dom.hourStrip.innerHTML = items.join('');
 }
 
 function buildChartDatasets(hourly, nowIndex, aqiHourly, nowIndexAqi) {
-  const n = Math.min(24, hourly.time.length - nowIndex);
+  const n = Math.min(48, hourly.time.length - nowIndex);
   const labels = [], temp = [], feels = [], pop = [], precipMm = [], wind = [], gust = [], hum = [], uv = [], aqi = [];
   for (let k = 0; k < n; k++) {
     const i = nowIndex + k;
@@ -574,7 +576,7 @@ function buildChartDatasets(hourly, nowIndex, aqiHourly, nowIndexAqi) {
     const ai = nowIndexAqi + k;
     aqi.push(aqiHourly && aqiHourly.us_aqi && ai < aqiHourly.us_aqi.length ? aqiHourly.us_aqi[ai] : null);
   }
-  return { labels, temp, feels, pop, precipMm, wind, gust, hum, uv, aqi };
+  return { labels, temp, feels, pop, precipMm, wind, gust, hum, uv, aqi, sourceStart: nowIndex };
 }
 
 function syncChartSelection(metric) {
@@ -639,6 +641,7 @@ function renderChart(metric) {
     };
     dom.chartLegend.innerHTML = legendDot('#4cb782', 'Good') + legendDot('#f0a93c', 'Moderate') + legendDot('#e8615c', 'Unhealthy');
   }
+  config.selectedIndex = state.selectedHour - cd.sourceStart;
   state.chartConfig = config;
   Charts.render(dom.chartCanvas, config);
 }
@@ -696,6 +699,16 @@ function render() {
   const uvMax = daily.uv_index_max ? daily.uv_index_max[0] : uvNow;
   const visibilityNow = hourly.visibility ? hourly.visibility[nowIndex] : null;
   const aqiUS = aqiData && aqiData.current ? aqiData.current.us_aqi : null;
+  const auroraHours = hourly.time.slice(nowIndex, nowIndex + 24).map((_, k) => ({
+    cloud: hourly.cloud_cover ? hourly.cloud_cover[nowIndex + k] : null,
+    night: hourly.is_day && hourly.is_day[nowIndex + k] === 0,
+  }));
+  const knownClouds = auroraHours.map((h) => h.cloud).filter((v) => v != null);
+  const cloudiness24 = knownClouds.length ? knownClouds.reduce((a, b) => a + b, 0) / knownClouds.length : null;
+  const nightHours = auroraHours.filter((h) => h.night && h.cloud != null);
+  const auroraChance = nightHours.length ? nightHours.reduce((sum, h) => sum + 100 - h.cloud, 0) / nightHours.length : 0;
+  dom.auroraCloudiness.textContent = cloudiness24 == null ? '—' : `${Math.round(cloudiness24)}%`;
+  dom.auroraChance.textContent = `${Math.round(auroraChance)}%`;
 
   dom.chipPrecip.textContent = formatPrecip(cur.precipitation);
   dom.chipPrecipSub.textContent = cur.precipitation > 0 ? 'falling now' : (popNext6 >= 10 ? `${Math.round(popNext6)}% chance later` : 'none expected');
@@ -725,6 +738,7 @@ function render() {
   });
 
   // --- hourly strip + charts ---
+  state.selectedHour = nowIndex;
   renderHourStrip(hourly, nowIndex);
   state.chartData = buildChartDatasets(hourly, nowIndex, aqiData ? aqiData.hourly : null, nowIndexAqi);
   state.activeMetric = 'temp';
@@ -904,6 +918,7 @@ function cacheDom() {
     chipUv: byId('chip-uv'), chipUvSub: byId('chip-uv-sub'), chipPressure: byId('chip-pressure'),
     chipVisibility: byId('chip-visibility'), chipVisibilitySub: byId('chip-visibility-sub'),
     hourStrip: byId('hour-strip'), chartCanvas: byId('chart-canvas'), chartLegend: byId('chart-legend'), chartTooltip: byId('chart-tooltip'),
+    auroraCloudiness: byId('aurora-cloudiness'), auroraChance: byId('aurora-chance'),
     guidanceGrid: byId('guidance-grid'), sunTimes: byId('sun-times'), moonTimes: byId('moon-times'),
     searchForm: byId('search-form'), searchInput: byId('search-input'), resultsPanel: byId('results-panel'),
     locateBtn: byId('locate-btn'), unitC: byId('unit-c'), unitF: byId('unit-f'), scrollCue: byId('scroll-cue'),
@@ -969,7 +984,37 @@ function wireEvents() {
 
   dom.chartCanvas.addEventListener('pointermove', showChartTooltip);
   dom.chartCanvas.addEventListener('pointerleave', hideChartTooltip);
-  dom.chartCanvas.addEventListener('click', showChartTooltip);
+  dom.chartCanvas.addEventListener('click', (event) => {
+    const index = chartIndexAtEvent(event);
+    if (index == null) return;
+    state.selectedHour = state.chartData.sourceStart + index;
+    syncHourSelection();
+    renderChart(state.activeMetric);
+    showChartTooltip(event);
+  });
+  dom.hourStrip.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-hour-index]');
+    if (!button) return;
+    state.selectedHour = Number(button.dataset.hourIndex);
+    syncHourSelection();
+    renderChart(state.activeMetric);
+  });
+}
+
+function syncHourSelection() {
+  dom.hourStrip.querySelectorAll('[data-hour-index]').forEach((button) => {
+    const selected = Number(button.dataset.hourIndex) === state.selectedHour;
+    button.classList.toggle('is-selected', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
+}
+
+function chartIndexAtEvent(event) {
+  if (!state.chartData) return null;
+  const rect = dom.chartCanvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  return Math.max(0, Math.min(state.chartData.labels.length - 1,
+    Math.round(((x - 30) / Math.max(rect.width - 38, 1)) * (state.chartData.labels.length - 1))));
 }
 
 function chartValueLabel(metric, value) {
@@ -992,7 +1037,7 @@ function showChartTooltip(event) {
   const padL = 30, padR = 8;
   const innerW = W - padL - padR;
   const n = state.chartData.labels.length;
-  const index = Math.max(0, Math.min(n - 1, Math.round(((x - padL) / Math.max(innerW, 1)) * (n - 1))));
+  const index = chartIndexAtEvent(event);
   const metric = state.activeMetric || 'temp';
   const time = state.chartData.labels[index];
   const rows = state.chartConfig.series.map((s) => {

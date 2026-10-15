@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Skylark Weather</title>
-<meta name="description" content="A friendly, animated weather companion — current conditions, feels-like, air quality, 24-hour trends, and what to wear today." />
+<meta name="description" content="A friendly, animated weather companion — current conditions, feels-like, air quality, 48-hour trends, and what to wear today." />
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json" />
@@ -45,6 +45,7 @@
 <g id="ic-uv"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></g>
 <g id="ic-pressure"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
 <g id="ic-eye"><path d="M2 12s3.8-6.5 10-6.5S22 12 22 12s-3.8 6.5-10 6.5S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/></g>
+<g id="ic-cloud"><path d="M7 18h10a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.3A3.4 3.4 0 0 0 7 18Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></g>
 <g id="ic-search"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></g>
 <g id="ic-locate"><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M12 2.5v3.2M12 18.3v3.2M2.5 12h3.2M18.3 12h3.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/></g>
 <g id="ic-chevron-down"><path d="M5 8l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
@@ -259,17 +260,27 @@
           <div class="chip-value" id="chip-visibility">—</div>
           <div class="chip-sub" id="chip-visibility-sub">—</div>
         </div>
+        <div class="chip aurora-chip">
+          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-cloud"/></svg>Aurora cloud</div>
+          <div class="chip-value" id="aurora-cloudiness">—</div>
+          <div class="chip-sub">average forecast</div>
+        </div>
+        <div class="chip aurora-chip">
+          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-eye"/></svg>Aurora</div>
+          <div class="chip-value" id="aurora-chance">—</div>
+          <div class="chip-sub">Visibility</div>
+        </div>
       </div>
 
-      <button class="scroll-cue" id="scroll-cue" type="button" aria-label="Scroll for the 24-hour forecast">
-        <span>Next 24 hours</span>
+      <button class="scroll-cue" id="scroll-cue" type="button" aria-label="Scroll for the 48-hour forecast">
+        <span>Next 48 hours</span>
         <svg viewBox="0 0 24 24" fill="none"><use href="#ic-chevron-down"/></svg>
       </button>
     </section>
 
     <!-- ============================== hourly ============================== -->
     <section class="section" id="hourly-section" style="display:none">
-      <h2 class="section-title">Next 24 hours</h2>
+      <h2 class="section-title">Next 48 hours</h2>
       <div class="panel">
         <div class="hour-strip" id="hour-strip"></div>
         <div class="chart-tabs" role="tablist" aria-label="Hourly detail" id="chart-tabs">
