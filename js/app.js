@@ -5,13 +5,14 @@
      - Air quality:              https://air-quality-api.open-meteo.com/v1/air-quality
      - City search:              https://geocoding-api.open-meteo.com/v1/search
      - GPS -> place name:        https://api.bigdatacloud.net/data/reverse-geocode-client
+     - Aurora Kp forecast:       https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json
    ========================================================================== */
 
 const state = {
   unit: 'C',
   lat: null, lon: null, placeName: '',
-  rawWeather: null, rawAqi: null,
-  chartData: null, activeMetric: 'temp', selectedHour: 0,
+  rawWeather: null, rawAqi: null, rawKp: null,
+  chartData: null, activeMetric: 'temp', selectedHour: 0, selectedTime: null,
   chartConfig: null,
   lastResults: [],
   lastRefresh: 0,
@@ -159,6 +160,85 @@ async function fetchAQI(lat, lon) {
   return res.json();
 }
 
+// NOAA SWPC planetary Kp: observed + forecast in 3-hour UTC blocks, ~3 days ahead.
+// Normalised to [{ t: epoch ms (block start), kp, predicted }].
+async function fetchKp() {
+  const res = await fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json');
+  if (!res.ok) throw new Error('kp_fetch_failed');
+  const raw = await res.json();
+  // Older versions of this product were an array of arrays with a header row.
+  const rows = Array.isArray(raw[0]) ? raw.slice(1).map(([time_tag, kp, observed]) => ({ time_tag, kp, observed })) : raw;
+  return rows
+    .map((r) => ({ t: Date.parse(r.time_tag + 'Z'), kp: Number(r.kp), predicted: r.observed === 'predicted' }))
+    .filter((r) => Number.isFinite(r.t) && Number.isFinite(r.kp));
+}
+
+/* ---------------------------------------------------------------------- */
+/* Aurora                                                                 */
+/* ---------------------------------------------------------------------- */
+
+// Geomagnetic north pole (centred-dipole approximation, IGRF epoch 2025).
+const GEOMAG_POLE = { lat: 80.8, lon: -72.6 };
+const KP_BLOCK_MS = 3 * 60 * 60 * 1000;
+
+function geomagneticLatitude(lat, lon) {
+  const rad = Math.PI / 180;
+  const s = Math.sin(lat * rad) * Math.sin(GEOMAG_POLE.lat * rad)
+    + Math.cos(lat * rad) * Math.cos(GEOMAG_POLE.lat * rad) * Math.cos((lon - GEOMAG_POLE.lon) * rad);
+  return Math.asin(Math.max(-1, Math.min(1, s))) / rad;
+}
+
+// The oval's equatorward edge sits overhead at roughly 66.5° - 2.05·Kp magnetic
+// latitude; from the ground it can be seen low on the poleward horizon a few
+// degrees (≈1.5 Kp) further out. Tuned against the usual rules of thumb
+// (Toronto ~5, New York ~6–7, London ~5, Oslo ~2). Returns Kp for a horizon view.
+function kpNeededForHorizon(magLat) {
+  return Math.max(0, (66.5 - Math.abs(magLat)) / 2.05 - 1.5);
+}
+
+function kpLevelLabel(kp) {
+  if (kp == null) return 'unavailable';
+  if (kp >= 9) return 'G5 extreme storm';
+  if (kp >= 8) return 'G4 severe storm';
+  if (kp >= 7) return 'G3 strong storm';
+  if (kp >= 6) return 'G2 storm';
+  if (kp >= 5) return 'G1 storm';
+  if (kp >= 4) return 'active';
+  return 'quiet';
+}
+
+function kpAt(kpSeries, utcMs) {
+  if (!kpSeries) return null;
+  const block = kpSeries.find((r) => utcMs >= r.t && utcMs < r.t + KP_BLOCK_MS);
+  return block ? block.kp : null;
+}
+
+// Open-Meteo hourly times are wall-clock strings in the location's timezone
+// (demo data uses real ISO instants instead).
+function hourUtcMs(timeStr, utcOffsetSeconds) {
+  if (/Z$|[+-]\d\d:\d\d$/.test(timeStr)) return Date.parse(timeStr);
+  return Date.parse(timeStr + 'Z') - (utcOffsetSeconds || 0) * 1000;
+}
+
+// Per-hour chance (0–100) of seeing aurora: geomagnetic reach × clear sky × darkness.
+function auroraHourly(weather, kpSeries, start, count) {
+  const hourly = weather.hourly;
+  const needed = kpNeededForHorizon(geomagneticLatitude(state.lat, state.lon));
+  const out = [];
+  for (let i = start; i < Math.min(hourly.time.length, start + count); i++) {
+    const kp = kpAt(kpSeries, hourUtcMs(hourly.time[i], weather.utc_offset_seconds));
+    const cloud = hourly.cloud_cover ? hourly.cloud_cover[i] : null;
+    const dark = hourly.is_day ? hourly.is_day[i] === 0 : false;
+    let chance = null;
+    if (kp != null) {
+      const reach = 1 / (1 + Math.exp(-1.6 * (kp - needed - 0.5)));
+      chance = dark ? Math.min(95, 100 * reach * (1 - (cloud == null ? 50 : cloud) / 100)) : 0;
+    }
+    out.push({ index: i, kp, cloud, dark, chance });
+  }
+  return { needed, hours: out };
+}
+
 const DEMO_WEATHER_PRESETS = [
   { id: 'warm-clear', label: 'Warm + clear', weatherCode: 1, category: 'clear', temp: 28, feelsLike: 29, windKph: 12, humidity: 38, precip: 0, uv: 7, visibility: 14000, aqi: 36 },
   { id: 'rainy-mild', label: 'Rainy + mild', weatherCode: 61, category: 'rain', temp: 14, feelsLike: 13, windKph: 23, humidity: 76, precip: 3.2, uv: 2, visibility: 7000, aqi: 82 },
@@ -288,6 +368,9 @@ function loadDemoWeatherPreset(modeId, label) {
   state.lon = 0;
   state.placeName = label || `Skylark Weather Lab — ${preset.label}`;
   state.rawWeather = payload;
+  state.selectedTime = null;
+  const blockStart = Math.floor(Date.now() / (3 * 3600000)) * 3 * 3600000;
+  state.rawKp = Array.from({ length: 20 }, (_, i) => ({ t: blockStart + i * 3 * 3600000, kp: Math.max(0, 3 + Math.sin(i / 2) * 2.5), predicted: true }));
   state.rawAqi = {
     current: { us_aqi: preset.aqi },
     hourly: { time: payload.hourly.time, us_aqi: Array.from({ length: 24 }, (_, i) => Math.max(10, preset.aqi + Math.sin(i / 2.7) * 18)) },
@@ -359,9 +442,13 @@ async function loadLocation(lat, lon, label, options = {}) {
   try {
     const weatherPromise = fetchWeather(lat, lon);
     const aqiPromise = fetchAQI(lat, lon).catch(() => null);
-    const [weatherData, aqiData] = await Promise.all([weatherPromise, aqiPromise]);
+    const kpPromise = fetchKp().catch(() => null);
+    const [weatherData, aqiData, kpData] = await Promise.all([weatherPromise, aqiPromise, kpPromise]);
+    if (!refreshOnly) state.selectedTime = null;
     state.lat = lat; state.lon = lon; state.placeName = label;
     state.rawWeather = weatherData; state.rawAqi = aqiData;
+    // Keep the last good Kp forecast if only this refresh's fetch failed.
+    if (kpData || !refreshOnly) state.rawKp = kpData;
     state.lastRefresh = Date.now();
     // Reveal the hourly section before rendering into it — see the note in
     // loadDemoWeatherPreset for why the order matters for the chart canvas.
@@ -560,7 +647,8 @@ function renderHourStrip(hourly, nowIndex) {
 
 function buildChartDatasets(hourly, nowIndex, aqiHourly, nowIndexAqi) {
   const n = Math.min(48, hourly.time.length - nowIndex);
-  const labels = [], temp = [], feels = [], pop = [], precipMm = [], wind = [], gust = [], hum = [], uv = [], aqi = [];
+  const labels = [], temp = [], feels = [], pop = [], precipMm = [], wind = [], gust = [], hum = [], uv = [], aqi = [], clouds = [];
+  const aurora = auroraHourly(state.rawWeather, state.rawKp, nowIndex, n).hours;
   for (let k = 0; k < n; k++) {
     const i = nowIndex + k;
     const d = parseLocal(hourly.time[i]);
@@ -573,10 +661,15 @@ function buildChartDatasets(hourly, nowIndex, aqiHourly, nowIndexAqi) {
     gust.push(state.unit === 'F' ? kmhToMph(hourly.wind_gusts_10m[i]) : hourly.wind_gusts_10m[i]);
     hum.push(hourly.relative_humidity_2m[i]);
     uv.push(hourly.uv_index ? hourly.uv_index[i] : 0);
+    clouds.push(hourly.cloud_cover ? hourly.cloud_cover[i] : 0);
     const ai = nowIndexAqi + k;
     aqi.push(aqiHourly && aqiHourly.us_aqi && ai < aqiHourly.us_aqi.length ? aqiHourly.us_aqi[ai] : null);
   }
-  return { labels, temp, feels, pop, precipMm, wind, gust, hum, uv, aqi, sourceStart: nowIndex };
+  return {
+    labels, temp, feels, pop, precipMm, wind, gust, hum, uv, aqi, clouds,
+    auroraChance: aurora.map((h) => h.chance || 0), kp: aurora.map((h) => h.kp),
+    sourceStart: nowIndex,
+  };
 }
 
 function syncChartSelection(metric) {
@@ -588,8 +681,8 @@ function syncChartSelection(metric) {
   });
 }
 
-function renderChart(metric) {
-  const allowed = ['temp', 'precip', 'wind', 'humidity', 'uv', 'aqi'];
+function renderChart(metric, { animate = true } = {}) {
+  const allowed = ['temp', 'precip', 'wind', 'humidity', 'uv', 'aqi', 'clouds', 'aurora'];
   const activeMetric = allowed.includes(metric) ? metric : 'temp';
   state.activeMetric = activeMetric;
   syncChartSelection(activeMetric);
@@ -640,11 +733,61 @@ function renderChart(metric) {
       gridColor: 'rgba(255,255,255,0.5)', textColor: '#ffffff',
     };
     dom.chartLegend.innerHTML = legendDot('#4cb782', 'Good') + legendDot('#f0a93c', 'Moderate') + legendDot('#e8615c', 'Unhealthy');
+  } else if (metric === 'clouds') {
+    config = {
+      type: 'line', labels: cd.labels, nowIndex: 0, yFormat: (v) => Math.round(v) + '%',
+      series: [{ name: 'Cloud cover', color: '#b8c4d6', data: cd.clouds }],
+      gridColor: 'rgba(255,255,255,0.5)', textColor: '#ffffff',
+    };
+    dom.chartLegend.innerHTML = legendDot('#b8c4d6', 'Cloud cover');
+  } else if (metric === 'aurora') {
+    config = {
+      type: 'bar', labels: cd.labels, nowIndex: 0, yFormat: (v) => Math.round(v) + '%', minYMax: 10,
+      series: [{ name: 'Aurora chance', color: '#5be3a1', data: cd.auroraChance }],
+      extraRows: [
+        { name: 'Kp', color: '#b48cff', data: cd.kp, format: (v) => (v == null ? '—' : v.toFixed(1)) },
+        { name: 'Clouds', color: '#b8c4d6', data: cd.clouds, format: (v) => `${Math.round(v)}%` },
+      ],
+      gridColor: 'rgba(255,255,255,0.5)', textColor: '#ffffff',
+    };
+    dom.chartLegend.innerHTML = state.rawKp
+      ? legendDot('#5be3a1', 'Chance to see aurora (dark hours)')
+      : legendDot('#9aa4b2', 'Kp forecast unavailable');
   }
   config.selectedIndex = state.selectedHour - cd.sourceStart;
   state.chartConfig = config;
-  Charts.render(dom.chartCanvas, config);
+  Charts.render(dom.chartCanvas, config, { animate });
 }
+function renderAuroraChips(weather, nowIndex) {
+  const { needed, hours } = auroraHourly(weather, state.rawKp, nowIndex, 24);
+  const fmtHour = (i) => (i === nowIndex ? 'now' : hourLabel(parseLocal(weather.hourly.time[i])));
+  const avg = (vals) => (vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null);
+
+  const kps = hours.map((h) => h.kp).filter((v) => v != null);
+  const kpPeak = kps.length ? Math.max(...kps) : null;
+  dom.auroraKp.textContent = kpPeak == null ? '—' : kpPeak.toFixed(1);
+  dom.auroraKpSub.textContent = kpPeak == null ? 'forecast unavailable' : `24h peak · ${kpLevelLabel(kpPeak)}`;
+
+  dom.auroraKpNeeded.textContent = needed > 9 ? '9+' : needed.toFixed(1);
+  dom.auroraKpNeededSub.textContent = needed > 9 ? 'too far from the pole' : 'for a view on the horizon';
+
+  const cloudAll = avg(hours.map((h) => h.cloud).filter((v) => v != null));
+  const cloudNight = avg(hours.filter((h) => h.dark && h.cloud != null).map((h) => h.cloud));
+  dom.auroraCloudiness.textContent = cloudAll == null ? '—' : `${Math.round(cloudAll)}%`;
+  dom.auroraCloudinessSub.textContent = cloudNight == null ? '24h avg · no dark hours' : `24h avg · ${Math.round(cloudNight)}% after dark`;
+
+  const best = hours.filter((h) => h.chance != null).reduce((a, h) => (!a || h.chance > a.chance ? h : a), null);
+  dom.auroraChance.textContent = best ? `${Math.round(best.chance)}%` : '—';
+  let note = 'needs Kp forecast';
+  if (best) {
+    if (!hours.some((h) => h.dark)) note = 'no dark hours';
+    else if (best.chance >= 1) note = `best around ${fmtHour(best.index)}`;
+    else if (kpPeak != null && kpPeak < needed - 1) note = 'activity too low here';
+    else note = 'clouds in the way';
+  }
+  dom.auroraChanceSub.textContent = note;
+}
+
 function legendDot(color, label) { return `<span><i class="legend-dot" style="background:${color}"></i>${label}</span>`; }
 
 /* ---------------------------------------------------------------------- */
@@ -699,16 +842,7 @@ function render() {
   const uvMax = daily.uv_index_max ? daily.uv_index_max[0] : uvNow;
   const visibilityNow = hourly.visibility ? hourly.visibility[nowIndex] : null;
   const aqiUS = aqiData && aqiData.current ? aqiData.current.us_aqi : null;
-  const auroraHours = hourly.time.slice(nowIndex, nowIndex + 24).map((_, k) => ({
-    cloud: hourly.cloud_cover ? hourly.cloud_cover[nowIndex + k] : null,
-    night: hourly.is_day && hourly.is_day[nowIndex + k] === 0,
-  }));
-  const knownClouds = auroraHours.map((h) => h.cloud).filter((v) => v != null);
-  const cloudiness24 = knownClouds.length ? knownClouds.reduce((a, b) => a + b, 0) / knownClouds.length : null;
-  const nightHours = auroraHours.filter((h) => h.night && h.cloud != null);
-  const auroraChance = nightHours.length ? nightHours.reduce((sum, h) => sum + 100 - h.cloud, 0) / nightHours.length : 0;
-  dom.auroraCloudiness.textContent = cloudiness24 == null ? '—' : `${Math.round(cloudiness24)}%`;
-  dom.auroraChance.textContent = `${Math.round(auroraChance)}%`;
+  renderAuroraChips(weatherData, nowIndex);
 
   dom.chipPrecip.textContent = formatPrecip(cur.precipitation);
   dom.chipPrecipSub.textContent = cur.precipitation > 0 ? 'falling now' : (popNext6 >= 10 ? `${Math.round(popNext6)}% chance later` : 'none expected');
@@ -738,10 +872,13 @@ function render() {
   });
 
   // --- hourly strip + charts ---
-  state.selectedHour = nowIndex;
+  // Auto-refresh re-renders every few minutes; keep the user's picked hour
+  // (matched by timestamp) and tab rather than snapping back to "Now".
+  const keptHour = state.selectedTime ? hourly.time.indexOf(state.selectedTime) : -1;
+  state.selectedHour = keptHour >= nowIndex && keptHour < nowIndex + 48 ? keptHour : nowIndex;
+  state.selectedTime = hourly.time[state.selectedHour];
   renderHourStrip(hourly, nowIndex);
   state.chartData = buildChartDatasets(hourly, nowIndex, aqiData ? aqiData.hourly : null, nowIndexAqi);
-  state.activeMetric = 'temp';
   syncChartSelection(state.activeMetric);
   renderChart(state.activeMetric);
 
@@ -918,7 +1055,10 @@ function cacheDom() {
     chipUv: byId('chip-uv'), chipUvSub: byId('chip-uv-sub'), chipPressure: byId('chip-pressure'),
     chipVisibility: byId('chip-visibility'), chipVisibilitySub: byId('chip-visibility-sub'),
     hourStrip: byId('hour-strip'), chartCanvas: byId('chart-canvas'), chartLegend: byId('chart-legend'), chartTooltip: byId('chart-tooltip'),
-    auroraCloudiness: byId('aurora-cloudiness'), auroraChance: byId('aurora-chance'),
+    auroraKp: byId('aurora-kp'), auroraKpSub: byId('aurora-kp-sub'),
+    auroraKpNeeded: byId('aurora-kp-needed'), auroraKpNeededSub: byId('aurora-kp-needed-sub'),
+    auroraCloudiness: byId('aurora-cloudiness'), auroraCloudinessSub: byId('aurora-cloudiness-sub'),
+    auroraChance: byId('aurora-chance'), auroraChanceSub: byId('aurora-chance-sub'),
     guidanceGrid: byId('guidance-grid'), sunTimes: byId('sun-times'), moonTimes: byId('moon-times'),
     searchForm: byId('search-form'), searchInput: byId('search-input'), resultsPanel: byId('results-panel'),
     locateBtn: byId('locate-btn'), unitC: byId('unit-c'), unitF: byId('unit-f'), scrollCue: byId('scroll-cue'),
@@ -979,7 +1119,7 @@ function wireEvents() {
   let resizeTimer = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { if (state.chartData) renderChart(state.activeMetric); }, 200);
+    resizeTimer = setTimeout(() => { if (state.chartData) renderChart(state.activeMetric, { animate: false }); }, 200);
   });
 
   dom.chartCanvas.addEventListener('pointermove', showChartTooltip);
@@ -987,34 +1127,40 @@ function wireEvents() {
   dom.chartCanvas.addEventListener('click', (event) => {
     const index = chartIndexAtEvent(event);
     if (index == null) return;
-    state.selectedHour = state.chartData.sourceStart + index;
-    syncHourSelection();
-    renderChart(state.activeMetric);
+    selectHour(state.chartData.sourceStart + index, { scrollStrip: true });
     showChartTooltip(event);
   });
   dom.hourStrip.addEventListener('click', (event) => {
     const button = event.target.closest('[data-hour-index]');
     if (!button) return;
-    state.selectedHour = Number(button.dataset.hourIndex);
-    syncHourSelection();
-    renderChart(state.activeMetric);
+    selectHour(Number(button.dataset.hourIndex));
   });
 }
 
-function syncHourSelection() {
+function selectHour(index, { scrollStrip = false } = {}) {
+  state.selectedHour = index;
+  state.selectedTime = state.rawWeather.hourly.time[index];
+  syncHourSelection(scrollStrip);
+  renderChart(state.activeMetric, { animate: false });
+}
+
+function syncHourSelection(scrollStrip) {
   dom.hourStrip.querySelectorAll('[data-hour-index]').forEach((button) => {
     const selected = Number(button.dataset.hourIndex) === state.selectedHour;
     button.classList.toggle('is-selected', selected);
     button.setAttribute('aria-pressed', String(selected));
+    if (selected && scrollStrip) {
+      // Centre the card horizontally without nudging the page vertically.
+      const strip = dom.hourStrip.getBoundingClientRect();
+      const card = button.getBoundingClientRect();
+      dom.hourStrip.scrollBy({ left: card.left - strip.left - (strip.width - card.width) / 2, behavior: 'smooth' });
+    }
   });
 }
 
 function chartIndexAtEvent(event) {
   if (!state.chartData) return null;
-  const rect = dom.chartCanvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  return Math.max(0, Math.min(state.chartData.labels.length - 1,
-    Math.round(((x - 30) / Math.max(rect.width - 38, 1)) * (state.chartData.labels.length - 1))));
+  return Charts.indexAt(dom.chartCanvas, event.clientX, state.chartData.labels.length);
 }
 
 function chartValueLabel(metric, value) {
@@ -1025,35 +1171,38 @@ function chartValueLabel(metric, value) {
   if (metric === 'humidity') return `${Math.round(value)}%`;
   if (metric === 'uv') return `${Math.round(value)}`;
   if (metric === 'aqi') return `${Math.round(value)}`;
+  if (metric === 'clouds' || metric === 'aurora') return `${Math.round(value)}%`;
   return `${Math.round(value)}`;
 }
 
 function showChartTooltip(event) {
   if (!state.chartData || !state.chartConfig) return;
-  const canvas = dom.chartCanvas;
-  const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const W = rect.width;
-  const padL = 30, padR = 8;
-  const innerW = W - padL - padR;
-  const n = state.chartData.labels.length;
+  const rect = dom.chartCanvas.getBoundingClientRect();
   const index = chartIndexAtEvent(event);
   const metric = state.activeMetric || 'temp';
   const time = state.chartData.labels[index];
-  const rows = state.chartConfig.series.map((s) => {
-    const dotColor = (s.barColors && s.barColors[index]) || s.color;
-    return `<span class="tt-row"><i class="tt-dot" style="background:${dotColor}"></i>${s.name}: <strong>${chartValueLabel(metric, s.data[index])}</strong></span>`;
-  }).join('');
+  const row = (color, name, value) => `<span class="tt-row"><i class="tt-dot" style="background:${color}"></i>${name}: <strong>${value}</strong></span>`;
+  const rows = state.chartConfig.series
+    .map((s) => row((s.barColors && s.barColors[index]) || s.color, s.name, chartValueLabel(metric, s.data[index])))
+    .concat((state.chartConfig.extraRows || []).map((r) => row(r.color, r.name, r.format(r.data[index]))))
+    .join('');
 
-  dom.chartTooltip.innerHTML = `<span class="tt-time">${time}</span>${rows}`;
-  const left = Math.min(Math.max(x, 28), W - 28);
-  dom.chartTooltip.style.left = `${left}px`;
-  dom.chartTooltip.style.top = `${Math.max(18, rect.height * 0.38)}px`;
-  dom.chartTooltip.classList.add('visible');
+  // Snap the tooltip to the data point (drawn by Charts.hover) instead of the raw pointer.
+  const anchor = Charts.hover(index) || { x: event.clientX - rect.left, y: rect.height / 2 };
+  const tip = dom.chartTooltip;
+  tip.innerHTML = `<span class="tt-time">${time}</span>${rows}`;
+  const half = tip.offsetWidth / 2;
+  tip.style.left = `${Math.min(Math.max(anchor.x, half), rect.width - half)}px`;
+  // Flip below the point near the top so it doesn't cover the tabs.
+  const below = anchor.y < tip.offsetHeight + 12;
+  tip.classList.toggle('below', below);
+  tip.style.top = `${anchor.y}px`;
+  tip.classList.add('visible');
 }
 
 function hideChartTooltip() {
   dom.chartTooltip.classList.remove('visible');
+  Charts.hover(null);
 }
 
 function bootstrapLocation() {

@@ -5,7 +5,11 @@
    ========================================================================== */
 
 const Charts = (() => {
+  const PAD_L = 30, PAD_R = 8;
   let raf = null;
+  let last = null;       // { canvas, config } from the latest render()
+  let lastLayout = null; // scale + geometry of the last drawn frame
+  let hoverIdx = null;
 
   function niceScale(min, max, padFrac = 0.18) {
     if (min === max) { min -= 1; max += 1; }
@@ -57,7 +61,7 @@ const Charts = (() => {
 
   function renderLine(ctx, opts) {
     const { W, H, labels, series, nowIndex, progress } = opts;
-    const padL = 30, padR = 8, padT = 14, padB = 22;
+    const padL = PAD_L, padR = PAD_R, padT = 14, padB = 22;
     const innerW = W - padL - padR, innerH = H - padT - padB;
 
     let yMin = Infinity, yMax = -Infinity;
@@ -125,14 +129,14 @@ const Charts = (() => {
 
   function renderBar(ctx, opts) {
     const { W, H, labels, series, nowIndex, progress } = opts;
-    const padL = 30, padR = 8, padT = 14, padB = 22;
+    const padL = PAD_L, padR = PAD_R, padT = 14, padB = 22;
     const innerW = W - padL - padR, innerH = H - padT - padB;
     const s = series[0];
 
-    let yMax = Math.max(...s.data, 1);
+    let yMax = Math.max(...s.data, opts.minYMax || 1);
     let yMin = Math.min(0, ...s.data);
     const scale = niceScale(yMin, yMax, 0.15);
-    scale.min = Math.min(scale.min, 0);
+    scale.min = yMin >= 0 ? 0 : Math.min(scale.min, 0);
 
     drawGrid(ctx, W, H, padL, padR, padT, padB, scale.min, scale.max, opts.yFormat, opts.gridColor, opts.textColor);
 
@@ -147,7 +151,7 @@ const Charts = (() => {
       ctx.save();
       ctx.fillStyle = (s.barColors && s.barColors[i]) || s.color;
       const top = Math.min(y, zeroY), h = Math.max(2, Math.abs(zeroY - y));
-      const r = Math.min(4, barW / 2);
+      const r = Math.min(4, barW / 2, h / 2);
       roundRect(ctx, x - barW / 2, top, barW, h, r);
       ctx.fill();
       if (nowIndex === i) {
@@ -164,19 +168,39 @@ const Charts = (() => {
     drawXLabels(ctx, labels, H, padL, padR, padB, Math.max(1, Math.round(n / 6)), opts.textColor);
   }
 
+  // Selected hour (dashed) and pointer hover (solid) share one marker style:
+  // a vertical rule plus a dot on every line, or an outline around the bar.
   function drawSelection(ctx, opts, n, padL, padR, padT, padB, innerW, innerH, yMin, yMax, visibleN) {
-    const i = opts.selectedIndex;
+    drawMarker(ctx, opts, opts.selectedIndex, true, n, padL, padT, padB, innerW, innerH, yMin, yMax, visibleN);
+    if (opts.hoverIndex !== opts.selectedIndex) {
+      drawMarker(ctx, opts, opts.hoverIndex, false, n, padL, padT, padB, innerW, innerH, yMin, yMax, visibleN);
+    }
+    lastLayout = { n, padL, padT, innerW, innerH, yMin, yMax };
+  }
+
+  function drawMarker(ctx, opts, i, dashed, n, padL, padT, padB, innerW, innerH, yMin, yMax, visibleN) {
     if (!Number.isInteger(i) || i < 0 || i >= visibleN) return;
     const x = xAt(i, n, padL, innerW);
     ctx.save();
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
-    ctx.setLineDash([3, 3]);
+    ctx.globalAlpha = dashed ? 1 : 0.6;
+    if (dashed) ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, opts.H - padB); ctx.stroke();
-    if (opts.type !== 'bar') {
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    if (opts.type === 'bar') {
+      const s = opts.series[0];
+      const barW = (innerW / n) * 0.55;
+      const y = yAt(s.data[i], yMin, yMax, padT, innerH);
+      const zeroY = yAt(0, yMin, yMax, padT, innerH);
+      const h = Math.max(2, Math.abs(zeroY - y)) + 4;
+      roundRect(ctx, x - barW / 2 - 2, Math.min(y, zeroY) - 2, barW + 4, h, Math.min(4, h / 2));
+      ctx.stroke();
+    } else {
       opts.series.forEach((s) => {
         const y = yAt(s.data[i], yMin, yMax, padT, innerH);
-        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.beginPath(); ctx.arc(x, y, dashed ? 5 : 4.5, 0, Math.PI * 2);
         ctx.fillStyle = s.color; ctx.fill();
         ctx.strokeStyle = '#fff'; ctx.stroke();
       });
@@ -194,30 +218,59 @@ const Charts = (() => {
     ctx.closePath();
   }
 
-  function render(canvas, config) {
+  function drawFrame(canvas, config, progress, hoverIndex) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    ctx.clearRect(0, 0, W, H);
+    const opts = { W, H, progress, hoverIndex, ...config };
+    if (config.type === 'bar') renderBar(ctx, opts); else renderLine(ctx, opts);
+  }
+
+  function render(canvas, config, { animate = true } = {}) {
     const ctx = canvas.getContext('2d');
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const W = canvas.clientWidth, H = canvas.clientHeight;
     canvas.width = Math.round(W * dpr);
     canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    last = { canvas, config };
 
     const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (raf) cancelAnimationFrame(raf);
+    raf = null;
 
-    const duration = reduceMotion ? 0 : 520;
+    const duration = reduceMotion || !animate ? 0 : 520;
+    if (duration === 0) { drawFrame(canvas, config, 1, hoverIdx); return; }
     const start = performance.now();
 
     const step = (now) => {
-      const t = duration === 0 ? 1 : Math.min(1, (now - start) / duration);
-      const eased = 1 - Math.pow(1 - t, 3);
-      ctx.clearRect(0, 0, W, H);
-      const opts = { W, H, progress: eased, ...config };
-      if (config.type === 'bar') renderBar(ctx, opts); else renderLine(ctx, opts);
-      if (t < 1) raf = requestAnimationFrame(step);
+      const t = Math.min(1, (now - start) / duration);
+      drawFrame(canvas, config, 1 - Math.pow(1 - t, 3), null);
+      raf = t < 1 ? requestAnimationFrame(step) : null;
+      if (!raf && hoverIdx != null) drawFrame(canvas, config, 1, hoverIdx);
     };
     raf = requestAnimationFrame(step);
   }
 
-  return { render };
+  // Redraw the finished chart with a hover marker at `index` (null clears it).
+  // Returns the marker's anchor point in CSS pixels so a tooltip can sit on it.
+  function hover(index) {
+    hoverIdx = index;
+    if (!last) return null;
+    if (raf) { cancelAnimationFrame(raf); raf = null; }
+    drawFrame(last.canvas, last.config, 1, index);
+    if (index == null || !lastLayout) return null;
+    const { n, padL, padT, innerW, innerH, yMin, yMax } = lastLayout;
+    const top = Math.max(...last.config.series.map((s) => s.data[index]).filter((v) => v != null));
+    return { x: xAt(index, n, padL, innerW), y: yAt(Number.isFinite(top) ? top : yMin, yMin, yMax, padT, innerH) };
+  }
+
+  // Nearest data index under a pointer's clientX, using the same padding as the drawing code.
+  function indexAt(canvas, clientX, n) {
+    const rect = canvas.getBoundingClientRect();
+    const innerW = Math.max(rect.width - PAD_L - PAD_R, 1);
+    return Math.max(0, Math.min(n - 1, Math.round(((clientX - rect.left - PAD_L) / innerW) * (n - 1))));
+  }
+
+  return { render, hover, indexAt };
 })();

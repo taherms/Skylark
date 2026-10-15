@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Skylark Weather</title>
-<meta name="description" content="A friendly, animated weather companion — current conditions, feels-like, air quality, 48-hour trends, and what to wear today." />
+<meta name="description" content="A friendly, animated weather companion — current conditions, feels-like, air quality, aurora outlook, 48-hour trends, and what to wear today." />
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json" />
@@ -46,6 +46,7 @@
 <g id="ic-pressure"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
 <g id="ic-eye"><path d="M2 12s3.8-6.5 10-6.5S22 12 22 12s-3.8 6.5-10 6.5S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/></g>
 <g id="ic-cloud"><path d="M7 18h10a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.3A3.4 3.4 0 0 0 7 18Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></g>
+<g id="ic-aurora"><path d="M3 17c2-6 4-9 6-9s2.5 5 4.5 5S17 6 21 4M3 20c2.5-3 4.5-4.5 6.5-4.5S13 18 15 18s3.5-2 6-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
 <g id="ic-search"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></g>
 <g id="ic-locate"><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M12 2.5v3.2M12 18.3v3.2M2.5 12h3.2M18.3 12h3.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/></g>
 <g id="ic-chevron-down"><path d="M5 8l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
@@ -261,14 +262,24 @@
           <div class="chip-sub" id="chip-visibility-sub">—</div>
         </div>
         <div class="chip aurora-chip">
-          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-cloud"/></svg>Aurora cloud</div>
-          <div class="chip-value" id="aurora-cloudiness">—</div>
-          <div class="chip-sub">average forecast</div>
+          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-aurora"/></svg>Aurora Kp</div>
+          <div class="chip-value" id="aurora-kp">—</div>
+          <div class="chip-sub" id="aurora-kp-sub">—</div>
         </div>
         <div class="chip aurora-chip">
-          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-eye"/></svg>Aurora</div>
+          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-locate"/></svg>Kp needed here</div>
+          <div class="chip-value" id="aurora-kp-needed">—</div>
+          <div class="chip-sub" id="aurora-kp-needed-sub">—</div>
+        </div>
+        <div class="chip aurora-chip">
+          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-cloud"/></svg>Cloud cover</div>
+          <div class="chip-value" id="aurora-cloudiness">—</div>
+          <div class="chip-sub" id="aurora-cloudiness-sub">—</div>
+        </div>
+        <div class="chip aurora-chip">
+          <div class="chip-head"><svg viewBox="0 0 24 24"><use href="#ic-eye"/></svg>Aurora chance</div>
           <div class="chip-value" id="aurora-chance">—</div>
-          <div class="chip-sub">visibility</div>
+          <div class="chip-sub" id="aurora-chance-sub">—</div>
         </div>
       </div>
 
@@ -290,6 +301,8 @@
           <button class="chart-tab" role="tab" data-metric="humidity" aria-selected="false">Humidity</button>
           <button class="chart-tab" role="tab" data-metric="uv" aria-selected="false">UV index</button>
           <button class="chart-tab" role="tab" data-metric="aqi" aria-selected="false">Air quality</button>
+          <button class="chart-tab" role="tab" data-metric="clouds" aria-selected="false">Clouds</button>
+          <button class="chart-tab" role="tab" data-metric="aurora" aria-selected="false">Aurora</button>
         </div>
         <div class="chart-body">
           <div class="chart-legend" id="chart-legend"></div>
@@ -317,7 +330,7 @@
 
     <footer class="app-footer" id="app-footer" style="display:none">
       <div>Developed by Taher S for his loving wife.</div>
-      <div>Weather &amp; air quality by <a href="https://open-meteo.com" target="_blank" rel="noopener">Open&#8209;Meteo</a>. Location lookup by <a href="https://www.bigdatacloud.com" target="_blank" rel="noopener">BigDataCloud</a>.</div>
+      <div>Weather &amp; air quality by <a href="https://open-meteo.com" target="_blank" rel="noopener">Open&#8209;Meteo</a>. Location lookup by <a href="https://www.bigdatacloud.com" target="_blank" rel="noopener">BigDataCloud</a>. Kp forecast by <a href="https://www.swpc.noaa.gov" target="_blank" rel="noopener">NOAA&nbsp;SWPC</a>.</div>
       <div>Version <span id="app-version">dev</span></div>
     </footer>
 

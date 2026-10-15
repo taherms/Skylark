@@ -1,6 +1,6 @@
 # Skylark Weather 🌤️
 
-A cute, animated, installable weather app. City search or GPS location, huge current temp + feels-like, live animated sky background, 24-hour graphs for every metric, and practical guidance (what to wear, umbrella or not, good day for a walk/trek/car wash). No backend, no API keys — just static files.
+A cute, animated, installable weather app. City search or GPS location, huge current temp + feels-like, live animated sky background, 48-hour graphs for every metric (hover or drag to scrub, tap an hour to pin it), an aurora outlook (Kp, cloud cover, chance to see it), and practical guidance (what to wear, umbrella or not, good day for a walk/trek/car wash). No backend, no API keys — just static files.
 
 ## Deploy to GitHub Pages
 
@@ -41,7 +41,7 @@ python3 -m http.server 8000
 - `css/style.css` — all styling, theming, animations
 - `js/app.js` — data fetching, unit conversions, guidance logic, UI wiring
 - `js/weather-scene.js` — animated sky/mascot canvas engine
-- `js/charts.js` — hand-rolled canvas charts for the 24-hour graphs
+- `js/charts.js` — hand-rolled canvas charts for the 48-hour graphs
 - `manifest.json` / `sw.js` — PWA installability + offline app-shell caching
 - `icons/` — app icons (regular + maskable + favicons)
 
@@ -51,5 +51,6 @@ python3 -m http.server 8000
 - Air quality: Open-Meteo Air Quality API
 - City search: Open-Meteo Geocoding API
 - GPS reverse geocoding (coordinates → place name): [BigDataCloud](https://www.bigdatacloud.com/) free client API
+- Aurora Kp forecast: [NOAA SWPC](https://www.swpc.noaa.gov/) planetary K-index forecast
 
 No sign-up, no keys, no rate-limit headaches for personal/small-scale use.
