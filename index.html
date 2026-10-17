@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Skylark Weather</title>
-<meta name="description" content="A friendly, animated weather companion — current conditions, feels-like, air quality, aurora outlook, 48-hour trends, and what to wear today." />
+<meta name="description" content="A friendly, animated weather companion — current conditions, feels-like, official weather alerts, air quality, aurora outlook, 48-hour trends, and what to wear today." />
 
 <!-- PWA -->
 <link rel="manifest" href="manifest.json" />
@@ -47,6 +47,7 @@
 <g id="ic-eye"><path d="M2 12s3.8-6.5 10-6.5S22 12 22 12s-3.8 6.5-10 6.5S2 12 2 12Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.7"/></g>
 <g id="ic-cloud"><path d="M7 18h10a4 4 0 0 0 .3-8 5.5 5.5 0 0 0-10.6 1.3A3.4 3.4 0 0 0 7 18Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></g>
 <g id="ic-aurora"><path d="M3 17c2-6 4-9 6-9s2.5 5 4.5 5S17 6 21 4M3 20c2.5-3 4.5-4.5 6.5-4.5S13 18 15 18s3.5-2 6-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></g>
+<g id="ic-alert"><path d="M12 3.5 2.8 19.5h18.4L12 3.5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v4.2" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="16.9" r="1.1" fill="currentColor"/></g>
 <g id="ic-search"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M20 20l-5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></g>
 <g id="ic-locate"><circle cx="12" cy="12" r="2.6" fill="currentColor"/><path d="M12 2.5v3.2M12 18.3v3.2M2.5 12h3.2M18.3 12h3.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="1.6"/></g>
 <g id="ic-chevron-down"><path d="M5 8l7 7 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></g>
@@ -132,6 +133,7 @@
     <section class="hero" id="hero" style="display:none">
       <div class="hero-location" id="hero-location">—</div>
       <div class="hero-updated" id="hero-updated">—</div>
+      <div class="alerts-list" id="alerts-list" role="region" aria-label="Weather alerts" hidden></div>
 
       <div class="mascot-stage">
         <svg id="mascot" viewBox="0 0 220 200" aria-hidden="true">
@@ -330,7 +332,7 @@
 
     <footer class="app-footer" id="app-footer" style="display:none">
       <div>Developed by Taher S for his loving wife.</div>
-      <div>Weather &amp; air quality by <a href="https://open-meteo.com" target="_blank" rel="noopener">Open&#8209;Meteo</a>. Location lookup by <a href="https://www.bigdatacloud.com" target="_blank" rel="noopener">BigDataCloud</a>. Kp forecast by <a href="https://www.swpc.noaa.gov" target="_blank" rel="noopener">NOAA&nbsp;SWPC</a>.</div>
+      <div>Weather &amp; air quality by <a href="https://open-meteo.com" target="_blank" rel="noopener">Open&#8209;Meteo</a>. Location lookup by <a href="https://www.bigdatacloud.com" target="_blank" rel="noopener">BigDataCloud</a>. Kp forecast by <a href="https://www.swpc.noaa.gov" target="_blank" rel="noopener">NOAA&nbsp;SWPC</a>. Alerts from the <a href="https://www.weather.gov" target="_blank" rel="noopener">US&nbsp;National Weather Service</a> and <a href="https://weather.gc.ca" target="_blank" rel="noopener">Environment&nbsp;Canada</a>.</div>
       <div>Version <span id="app-version">dev</span></div>
     </footer>
 

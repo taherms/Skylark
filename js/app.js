@@ -5,13 +5,14 @@
      - Air quality:              https://air-quality-api.open-meteo.com/v1/air-quality
      - City search:              https://geocoding-api.open-meteo.com/v1/search
      - GPS -> place name:        https://api.bigdatacloud.net/data/reverse-geocode-client
+     - Weather alerts:           https://api.weather.gov/alerts (US), https://api.weather.gc.ca weather-alerts (Canada)
      - Aurora Kp forecast:       https://services.swpc.noaa.gov/products/noaa-planetary-k-index-forecast.json
    ========================================================================== */
 
 const state = {
   unit: 'C',
   lat: null, lon: null, placeName: '',
-  rawWeather: null, rawAqi: null, rawKp: null,
+  rawWeather: null, rawAqi: null, rawKp: null, alerts: [], openAlerts: new Set(),
   chartData: null, activeMetric: 'temp', selectedHour: 0, selectedTime: null,
   chartConfig: null,
   lastResults: [],
@@ -171,6 +172,77 @@ async function fetchKp() {
   return rows
     .map((r) => ({ t: Date.parse(r.time_tag + 'Z'), kp: Number(r.kp), predicted: r.observed === 'predicted' }))
     .filter((r) => Number.isFinite(r.t) && Number.isFinite(r.kp));
+}
+
+/* ---------------------------------------------------------------------- */
+/* Official weather alerts                                                */
+/* ---------------------------------------------------------------------- */
+
+// Only national services that allow direct browser (CORS) requests:
+// US National Weather Service and Environment and Climate Change Canada.
+// Both are queried for North America and merged; each returns nothing
+// (or a 400, for NWS) outside its own country.
+// Normalised alert: { id, title, level: 'red'|'orange'|'yellow'|'info', area, source, start, end, description, instruction }.
+function inAlertCoverage(lat, lon) {
+  return lat >= 17 && lat <= 84 && lon >= -180 && lon <= -50;
+}
+
+const NWS_LEVEL = { Extreme: 'red', Severe: 'orange', Moderate: 'yellow', Minor: 'info', Unknown: 'info' };
+
+async function fetchNwsAlerts(lat, lon) {
+  const res = await fetch(`https://api.weather.gov/alerts/active?status=actual&point=${lat.toFixed(4)},${lon.toFixed(4)}`);
+  if (res.status === 400 || res.status === 404) return []; // point outside NWS coverage
+  if (!res.ok) throw new Error('nws_alerts_failed');
+  const data = await res.json();
+  return (data.features || []).map(({ properties: p }) => ({
+    id: p.id,
+    title: p.event,
+    level: NWS_LEVEL[p.severity] || 'info',
+    area: p.areaDesc,
+    source: p.senderName || 'US National Weather Service',
+    start: p.onset || p.effective,
+    end: p.ends || p.expires,
+    description: p.description || p.headline || '',
+    instruction: p.instruction || '',
+  }));
+}
+
+async function fetchEcccAlerts(lat, lon) {
+  // A tiny bbox around the point returns every alert region polygon that covers it.
+  const d = 0.01;
+  const params = new URLSearchParams({ f: 'json', limit: '50', bbox: [lon - d, lat - d, lon + d, lat + d].join(',') });
+  const res = await fetch(`https://api.weather.gc.ca/collections/weather-alerts/items?${params.toString()}`);
+  if (!res.ok) throw new Error('eccc_alerts_failed');
+  const data = await res.json();
+  const now = Date.now();
+  return (data.features || [])
+    .map(({ id, properties: p }) => p && ({ id: String(id).split('_')[0], p }))
+    .filter((a) => a && a.p.status_en !== 'ended' && Date.parse(a.p.expiration_datetime) > now)
+    .map(({ id, p }) => ({
+      id,
+      title: (p.alert_name_en || p.alert_short_name_en || 'Weather alert').replace(/^./, (c) => c.toUpperCase()),
+      level: p.risk_colour_en || (p.alert_type === 'warning' ? 'orange' : p.alert_type === 'statement' ? 'info' : 'yellow'),
+      area: p.feature_name_en,
+      source: 'Environment Canada',
+      start: p.validity_datetime,
+      end: p.event_end_datetime || p.expiration_datetime,
+      description: p.alert_text_en || '',
+      instruction: '',
+    }));
+}
+
+const ALERT_RANK = { red: 0, orange: 1, yellow: 2, info: 3 };
+
+// Resolves to [] when there's nothing (or no coverage); null only when every source failed.
+async function fetchAlerts(lat, lon) {
+  if (!inAlertCoverage(lat, lon)) return [];
+  const results = await Promise.allSettled([fetchNwsAlerts(lat, lon), fetchEcccAlerts(lat, lon)]);
+  if (results.every((r) => r.status === 'rejected')) return null;
+  const seen = new Set();
+  return results
+    .flatMap((r) => (r.status === 'fulfilled' ? r.value : []))
+    .filter((a) => (seen.has(a.id) ? false : seen.add(a.id)))
+    .sort((a, b) => (ALERT_RANK[a.level] ?? 3) - (ALERT_RANK[b.level] ?? 3));
 }
 
 /* ---------------------------------------------------------------------- */
@@ -369,6 +441,13 @@ function loadDemoWeatherPreset(modeId, label) {
   state.placeName = label || `Skylark Weather Lab — ${preset.label}`;
   state.rawWeather = payload;
   state.selectedTime = null;
+  state.openAlerts.clear();
+  state.alerts = preset.category === 'storm' ? [{
+    id: 'demo-storm', title: 'Severe thunderstorm warning', level: 'orange', area: 'Skylark Weather Lab',
+    source: 'Demo data', start: new Date().toISOString(), end: new Date(Date.now() + 4 * 3600000).toISOString(),
+    description: 'Thunderstorms capable of damaging wind gusts near 90 km/h and heavy rain are moving through the area.',
+    instruction: 'Move indoors and away from windows. Secure loose objects outdoors.',
+  }] : [];
   const blockStart = Math.floor(Date.now() / (3 * 3600000)) * 3 * 3600000;
   state.rawKp = Array.from({ length: 20 }, (_, i) => ({ t: blockStart + i * 3 * 3600000, kp: Math.max(0, 3 + Math.sin(i / 2) * 2.5), predicted: true }));
   state.rawAqi = {
@@ -443,8 +522,11 @@ async function loadLocation(lat, lon, label, options = {}) {
     const weatherPromise = fetchWeather(lat, lon);
     const aqiPromise = fetchAQI(lat, lon).catch(() => null);
     const kpPromise = fetchKp().catch(() => null);
-    const [weatherData, aqiData, kpData] = await Promise.all([weatherPromise, aqiPromise, kpPromise]);
-    if (!refreshOnly) state.selectedTime = null;
+    const alertsPromise = fetchAlerts(lat, lon).catch(() => null);
+    const [weatherData, aqiData, kpData, alerts] = await Promise.all([weatherPromise, aqiPromise, kpPromise, alertsPromise]);
+    if (!refreshOnly) { state.selectedTime = null; state.openAlerts.clear(); }
+    // On a refresh, a failed alerts fetch keeps the last list rather than hiding active warnings.
+    if (alerts || !refreshOnly) state.alerts = alerts || [];
     state.lat = lat; state.lon = lon; state.placeName = label;
     state.rawWeather = weatherData; state.rawAqi = aqiData;
     // Keep the last good Kp forecast if only this refresh's fetch failed.
@@ -758,6 +840,42 @@ function renderChart(metric, { animate = true } = {}) {
   state.chartConfig = config;
   Charts.render(dom.chartCanvas, config, { animate });
 }
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderAlerts(timeZone) {
+  const alerts = state.alerts || [];
+  dom.alertsList.hidden = alerts.length === 0;
+  if (!alerts.length) { dom.alertsList.innerHTML = ''; return; }
+  // Alert times are absolute instants; show them in the location's own timezone.
+  const fmt = (iso) => {
+    if (!iso) return null;
+    const opts = { weekday: 'short', hour: 'numeric', minute: '2-digit' };
+    try { return new Date(iso).toLocaleString([], { ...opts, timeZone }); } catch (_) { return new Date(iso).toLocaleString([], opts); }
+  };
+  const para = (text) => escapeHtml(text.trim()).split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, ' ')}</p>`).join('');
+  dom.alertsList.innerHTML = alerts.map((a) => {
+    const startMs = Date.parse(a.start);
+    const when = a.end ? `${startMs > Date.now() ? `From ${fmt(a.start)} · ` : ''}Until ${fmt(a.end)}` : '';
+    return `<details class="alert-card level-${escapeHtml(a.level)}" data-alert-id="${escapeHtml(a.id)}" ${state.openAlerts.has(a.id) ? 'open' : ''}>
+      <summary>
+        <svg class="alert-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#ic-alert"/></svg>
+        <span class="alert-head">
+          <span class="alert-title">${escapeHtml(a.title)}</span>
+          ${when ? `<span class="alert-meta">${escapeHtml(when)}</span>` : ''}
+        </span>
+        <svg class="alert-chevron" viewBox="0 0 24 24" fill="none" aria-hidden="true"><use href="#ic-chevron-down"/></svg>
+      </summary>
+      <div class="alert-body">
+        ${para(a.description)}
+        ${a.instruction ? `<p class="alert-instruction"><strong>What to do:</strong> ${escapeHtml(a.instruction.trim()).replace(/\n+/g, ' ')}</p>` : ''}
+        <p class="alert-source">${escapeHtml(a.source)}${a.area ? ' · ' + escapeHtml(a.area) : ''}</p>
+      </div>
+    </details>`;
+  }).join('');
+}
+
 function renderAuroraChips(weather, nowIndex) {
   const { needed, hours } = auroraHourly(weather, state.rawKp, nowIndex, 24);
   const fmtHour = (i) => (i === nowIndex ? 'now' : hourLabel(parseLocal(weather.hourly.time[i])));
@@ -818,6 +936,7 @@ function render() {
 
   // --- header / location ---
   dom.heroLocation.textContent = state.placeName;
+  renderAlerts(weatherData.timezone);
   dom.heroUpdated.textContent = 'Updated ' + parseLocal(cur.time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   dom.sunTimes.textContent = `${sunrise ? 'Sunrise ' + sunrise.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Sunrise —'} · ${sunset ? 'Sunset ' + sunset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Sunset —'}`;
   if (dom.moonTimes) {
@@ -1055,6 +1174,7 @@ function cacheDom() {
     chipUv: byId('chip-uv'), chipUvSub: byId('chip-uv-sub'), chipPressure: byId('chip-pressure'),
     chipVisibility: byId('chip-visibility'), chipVisibilitySub: byId('chip-visibility-sub'),
     hourStrip: byId('hour-strip'), chartCanvas: byId('chart-canvas'), chartLegend: byId('chart-legend'), chartTooltip: byId('chart-tooltip'),
+    alertsList: byId('alerts-list'),
     auroraKp: byId('aurora-kp'), auroraKpSub: byId('aurora-kp-sub'),
     auroraKpNeeded: byId('aurora-kp-needed'), auroraKpNeededSub: byId('aurora-kp-needed-sub'),
     auroraCloudiness: byId('aurora-cloudiness'), auroraCloudinessSub: byId('aurora-cloudiness-sub'),
@@ -1130,6 +1250,12 @@ function wireEvents() {
     selectHour(state.chartData.sourceStart + index, { scrollStrip: true });
     showChartTooltip(event);
   });
+  // 'toggle' doesn't bubble, so listen in the capture phase.
+  dom.alertsList.addEventListener('toggle', (event) => {
+    const card = event.target.closest('[data-alert-id]');
+    if (!card) return;
+    if (card.open) state.openAlerts.add(card.dataset.alertId); else state.openAlerts.delete(card.dataset.alertId);
+  }, true);
   dom.hourStrip.addEventListener('click', (event) => {
     const button = event.target.closest('[data-hour-index]');
     if (!button) return;
